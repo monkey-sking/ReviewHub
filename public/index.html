@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ReviewHub</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Local review console</p>
+          <h1>ReviewHub</h1>
+          <p class="subtitle">Read-only view for approvals and daily queue.</p>
+        </div>
+        <button id="refreshButton" class="button" type="button">Refresh</button>
+      </header>
+
+      <section id="statusBanner" class="status-banner">Loading data…</section>
+
+      <section id="summaryCards" class="summary-grid" aria-label="Summary"></section>
+
+      <section class="card filters-card">
+        <div class="panel-heading">
+          <div>
+            <h2>Filters</h2>
+            <p>Keep it simple: status, platform, risk.</p>
+          </div>
+          <div id="resultCount" class="panel-meta"></div>
+        </div>
+        <div class="filters-row">
+          <label>
+            <span>Status</span>
+            <select id="statusFilter"></select>
+          </label>
+          <label>
+            <span>Platform</span>
+            <select id="platformFilter"></select>
+          </label>
+          <label>
+            <span>Risk</span>
+            <select id="riskFilter"></select>
+          </label>
+        </div>
+      </section>
+
+      <section class="content-grid">
+        <section class="card list-card">
+          <div class="panel-heading">
+            <div>
+              <h2>Main List</h2>
+              <p>Shows `approval_pending` and `queued` items.</p>
+            </div>
+            <div id="listMeta" class="panel-meta"></div>
+          </div>
+          <div id="itemList" class="item-list"></div>
+        </section>
+
+        <section class="card detail-card">
+          <div class="panel-heading">
+            <div>
+              <h2>Details</h2>
+              <p>Selected item + matched approval fields.</p>
+            </div>
+          </div>
+          <div id="detailEmpty" class="empty-state">Select an item from the list.</div>
+          <div id="detailView" hidden>
+            <div class="detail-grid" id="detailGrid"></div>
+            <div class="json-grid">
+              <section>
+                <h3>Queue JSON</h3>
+                <pre id="queueJson" class="json-view"></pre>
+              </section>
+              <section>
+                <h3>Approval JSON</h3>
+                <pre id="approvalJson" class="json-view"></pre>
+              </section>
+            </div>
+          </div>
+        </section>
+      </section>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

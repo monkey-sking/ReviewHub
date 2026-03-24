@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ReviewHub</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>ReviewHub</h1>
+      <p class="subtitle">本地审核台 · Aion 队列第一版</p>
+    </div>
+    <div class="actions">
+      <button id="refreshBtn">刷新</button>
+    </div>
+  </header>
+
+  <section class="cards" id="summaryCards"></section>
+
+  <section class="filters">
+    <div class="tabs" id="quickTabs">
+      <button class="tab active" data-quick="all">全部</button>
+      <button class="tab" data-quick="focus">待处理</button>
+      <button class="tab" data-quick="suspect">待校准</button>
+      <button class="tab" data-quick="done">已完成</button>
+    </div>
+    <label>状态
+      <select id="statusFilter">
+        <option value="all">全部</option>
+      </select>
+    </label>
+    <label>平台
+      <select id="platformFilter">
+        <option value="all">全部</option>
+      </select>
+    </label>
+    <label>风险
+      <select id="riskFilter">
+        <option value="all">全部</option>
+      </select>
+    </label>
+    <label class="search-wrap">搜索
+      <input id="searchInput" type="search" placeholder="标题 / notes / source" />
+    </label>
+  </section>
+
+  <main class="layout">
+    <section class="panel list-panel">
+      <div class="panel-title">项目列表</div>
+      <div id="listMeta" class="meta"></div>
+      <div id="itemsList" class="items"></div>
+    </section>
+
+    <section class="panel detail-panel">
+      <div class="panel-title">详情</div>
+      <div id="detailView" class="detail empty">请选择左侧项目</div>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
