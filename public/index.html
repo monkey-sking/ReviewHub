@@ -21,6 +21,41 @@
 
       <section id="summaryCards" class="summary-grid" aria-label="Summary"></section>
 
+      <section class="management-grid" aria-label="Management buckets">
+        <section class="card bucket-card">
+          <div class="panel-heading">
+            <div>
+              <h2>Needs review</h2>
+              <p>Approval-pending items ready for a human decision.</p>
+            </div>
+            <div id="needsReviewCount" class="panel-meta"></div>
+          </div>
+          <div id="needsReviewList" class="bucket-list"></div>
+        </section>
+
+        <section class="card bucket-card">
+          <div class="panel-heading">
+            <div>
+              <h2>Ready to execute</h2>
+              <p>Queued items with enough context for the next execution step.</p>
+            </div>
+            <div id="readyToExecuteCount" class="panel-meta"></div>
+          </div>
+          <div id="readyToExecuteList" class="bucket-list"></div>
+        </section>
+
+        <section class="card bucket-card">
+          <div class="panel-heading">
+            <div>
+              <h2>Needs info</h2>
+              <p>Records missing approval mapping, owner, or decision context.</p>
+            </div>
+            <div id="needsInfoCount" class="panel-meta"></div>
+          </div>
+          <div id="needsInfoList" class="bucket-list"></div>
+        </section>
+      </section>
+
       <section class="card filters-card">
         <div class="panel-heading">
           <div>

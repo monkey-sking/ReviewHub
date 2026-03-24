@@ -116,6 +116,13 @@ h3 {
   margin-bottom: 16px;
 }
 
+.management-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
 .summary-card {
   padding: 18px;
 }
@@ -191,7 +198,8 @@ select {
   gap: 16px;
 }
 
-.item-list {
+.item-list,
+.bucket-list {
   display: grid;
   gap: 10px;
   max-height: calc(100vh - 290px);
@@ -199,11 +207,36 @@ select {
   padding-right: 4px;
 }
 
-.item-row {
+.bucket-list {
+  max-height: 240px;
+}
+
+.item-row,
+.bucket-item {
   width: 100%;
   padding: 14px;
   text-align: left;
   cursor: pointer;
+}
+
+.bucket-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+
+.bucket-item strong,
+.bucket-item span {
+  display: block;
+}
+
+.bucket-item span {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.bucket-subline {
+  font-size: 12px;
 }
 
 .item-row-selected {

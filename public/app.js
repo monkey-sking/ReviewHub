@@ -17,7 +17,13 @@ const elements = {
   detailView: document.getElementById('detailView'),
   itemList: document.getElementById('itemList'),
   listMeta: document.getElementById('listMeta'),
+  needsInfoCount: document.getElementById('needsInfoCount'),
+  needsInfoList: document.getElementById('needsInfoList'),
+  needsReviewCount: document.getElementById('needsReviewCount'),
+  needsReviewList: document.getElementById('needsReviewList'),
   queueJson: document.getElementById('queueJson'),
+  readyToExecuteCount: document.getElementById('readyToExecuteCount'),
+  readyToExecuteList: document.getElementById('readyToExecuteList'),
   refreshButton: document.getElementById('refreshButton'),
   resultCount: document.getElementById('resultCount'),
   projectFilter: document.getElementById('projectFilter'),
@@ -69,10 +75,10 @@ function createOptions(selectElement, values, currentValue) {
 function renderSummary() {
   const summary = state.data.summary;
   const cards = [
-    { label: 'Pending approvals', value: summary.pending_approvals },
-    { label: 'Queued items', value: summary.queued_items },
-    { label: 'Platforms', value: summary.platform_count },
-    { label: 'Statuses', value: summary.status_count }
+    { label: 'Needs review', value: summary.needs_review_count },
+    { label: 'Ready to execute', value: summary.ready_to_execute_count },
+    { label: 'Needs info', value: summary.missing_info_count },
+    { label: 'Platforms', value: summary.platform_count }
   ];
 
   elements.summaryCards.innerHTML = cards
@@ -93,6 +99,63 @@ function renderFilters() {
   createOptions(elements.statusFilter, statuses, state.filters.status);
   createOptions(elements.platformFilter, platforms, state.filters.platform);
   createOptions(elements.riskFilter, risks, state.filters.risk);
+}
+
+function createBucketMarkup(items, emptyText) {
+  if (items.length === 0) {
+    return `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
+  }
+
+  return items
+    .map((item) => {
+      const missingInfo = item.missing_info && item.missing_info.length > 0
+        ? `<span class="bucket-subline">Missing: ${escapeHtml(item.missing_info.join(', '))}</span>`
+        : '';
+
+      return `
+        <button class="bucket-item" data-item-id="${escapeHtml(item.id)}" type="button">
+          <strong>${escapeHtml(item.title)}</strong>
+          <span>${escapeHtml(item.platform)} · ${escapeHtml(item.action_label)}</span>
+          ${missingInfo}
+        </button>
+      `;
+    })
+    .join('');
+}
+
+function attachBucketSelection() {
+  document.querySelectorAll('[data-item-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.selectedId = button.dataset.itemId;
+      renderList();
+    });
+  });
+}
+
+function renderManagementBuckets() {
+  const filteredItems = getFilteredItems();
+  const buckets = {
+    needs_review: filteredItems.filter((item) => item.action_state === 'needs_review'),
+    ready_to_execute: filteredItems.filter((item) => item.action_state === 'ready_to_execute'),
+    missing_info: filteredItems.filter((item) => item.action_state === 'missing_info')
+  };
+
+  elements.needsReviewCount.textContent = String(buckets.needs_review.length);
+  elements.readyToExecuteCount.textContent = String(buckets.ready_to_execute.length);
+  elements.needsInfoCount.textContent = String(buckets.missing_info.length);
+
+  elements.needsReviewList.innerHTML = createBucketMarkup(
+    buckets.needs_review,
+    'No approval-pending items in the current slice.'
+  );
+  elements.readyToExecuteList.innerHTML = createBucketMarkup(
+    buckets.ready_to_execute,
+    'No queued items ready for the next step.'
+  );
+  elements.needsInfoList.innerHTML = createBucketMarkup(
+    buckets.missing_info,
+    'No records are currently missing management context.'
+  );
 }
 
 function getFilteredItems() {
@@ -157,14 +220,9 @@ function renderList() {
     })
     .join('');
 
-  elements.itemList.querySelectorAll('[data-item-id]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.selectedId = button.dataset.itemId;
-      renderList();
-    });
-  });
-
   const selectedItem = filteredItems.find((item) => item.id === state.selectedId) || filteredItems[0];
+  renderManagementBuckets();
+  attachBucketSelection();
   renderDetail(selectedItem);
 }
 
@@ -181,6 +239,7 @@ function renderDetail(item) {
   const rows = [
     ['Title', item.title || '—'],
     ['Project', item.project || '—'],
+    ['Action state', item.action_label || '—'],
     ['Platform', item.platform || '—'],
     ['Status', item.status || '—'],
     ['Risk', item.risk || '—'],
@@ -190,6 +249,7 @@ function renderDetail(item) {
     ['Requested by', item.requested_by || '—'],
     ['Approval ticket', item.approval_ticket || '—'],
     ['Approval entry', item.approval_entry_id || '—'],
+    ['Missing info', item.missing_info && item.missing_info.length ? item.missing_info.join(', ') : '—'],
     ['Reason', item.reason || '—'],
     ['Notes', item.notes || '—'],
     ['Source', item.source || '—']
