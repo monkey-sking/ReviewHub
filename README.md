@@ -48,10 +48,11 @@ http://127.0.0.1:4310
 
 ## What this MVP includes
 
-- Summary cards for pending approvals, approval-pending items, queued items, and platform count
+- Summary cards for pending approvals, queued items, platform count, and status count
 - Main list for `approval_pending` and `queued` items
-- Filters for status, platform, and risk
-- Detail pane with title, platform, status, risk, notes, reason, source, requested time, and approval metadata
+- Filters for project, status, platform, and risk
+- Search across title, notes, source, and project text
+- Detail pane with title, platform, project, status, risk, notes, reason, source, requested time, and approval metadata
 - Raw JSON preview for the queue item and matched approval entry
 - Read-only behavior only; no approve/revoke write actions
 

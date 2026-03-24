@@ -4,7 +4,8 @@ const state = {
     project: 'all',
     status: 'all',
     platform: 'all',
-    risk: 'all'
+    risk: 'all',
+    search: ''
   },
   selectedId: null
 };
@@ -21,6 +22,7 @@ const elements = {
   resultCount: document.getElementById('resultCount'),
   projectFilter: document.getElementById('projectFilter'),
   riskFilter: document.getElementById('riskFilter'),
+  searchInput: document.getElementById('searchInput'),
   statusBanner: document.getElementById('statusBanner'),
   statusFilter: document.getElementById('statusFilter'),
   summaryCards: document.getElementById('summaryCards'),
@@ -68,9 +70,9 @@ function renderSummary() {
   const summary = state.data.summary;
   const cards = [
     { label: 'Pending approvals', value: summary.pending_approvals },
-    { label: 'Approval-pending queue', value: summary.approval_pending_items },
     { label: 'Queued items', value: summary.queued_items },
-    { label: 'Platforms', value: summary.platform_count }
+    { label: 'Platforms', value: summary.platform_count },
+    { label: 'Statuses', value: summary.status_count }
   ];
 
   elements.summaryCards.innerHTML = cards
@@ -94,13 +96,22 @@ function renderFilters() {
 }
 
 function getFilteredItems() {
+  const searchTerm = state.filters.search.trim().toLowerCase();
+
   return state.data.items.filter((item) => {
     const projectMatch = state.filters.project === 'all' || item.project === state.filters.project;
     const statusMatch = state.filters.status === 'all' || item.status === state.filters.status;
     const platformMatch = state.filters.platform === 'all' || item.platform === state.filters.platform;
     const riskMatch = state.filters.risk === 'all' || item.risk === state.filters.risk;
+    const searchMatch =
+      !searchTerm ||
+      [item.title, item.notes, item.source, item.project, item.platform, item.status]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(searchTerm);
 
-    return projectMatch && statusMatch && platformMatch && riskMatch;
+    return projectMatch && statusMatch && platformMatch && riskMatch && searchMatch;
   });
 }
 
@@ -206,6 +217,7 @@ function syncFiltersFromInputs() {
   state.filters.status = elements.statusFilter.value;
   state.filters.platform = elements.platformFilter.value;
   state.filters.risk = elements.riskFilter.value;
+  state.filters.search = elements.searchInput.value;
   renderList();
 }
 
@@ -245,6 +257,7 @@ elements.projectFilter.addEventListener('change', syncFiltersFromInputs);
 elements.statusFilter.addEventListener('change', syncFiltersFromInputs);
 elements.platformFilter.addEventListener('change', syncFiltersFromInputs);
 elements.riskFilter.addEventListener('change', syncFiltersFromInputs);
+elements.searchInput.addEventListener('input', syncFiltersFromInputs);
 elements.refreshButton.addEventListener('click', loadData);
 
 loadData();
