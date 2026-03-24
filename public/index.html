@@ -223,6 +223,17 @@
                 </div>
                 <div id="handoffList" class="ops-list"></div>
               </section>
+
+              <section class="card operations-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>最近动作</h2>
+                    <p>快速看最近谁改了什么，避免处理状态失真。</p>
+                  </div>
+                  <div id="recentActivityMeta" class="panel-meta"></div>
+                </div>
+                <div id="recentActivityList" class="ops-list"></div>
+              </section>
             </section>
           </section>
 
@@ -343,6 +354,16 @@
                 <div id="actionLogList" class="ops-list"></div>
               </section>
               <div class="detail-grid" id="detailGrid"></div>
+              <section id="sourcePreviewPanel" class="detail-action-panel" hidden>
+                <div class="detail-action-heading">
+                  <div>
+                    <h3>源文件预览</h3>
+                    <p>这里直接看原始内容和识别到的图片 / 视频 / 链接线索。</p>
+                  </div>
+                </div>
+                <div id="sourceArtifactList" class="detail-artifact-list"></div>
+                <pre id="sourcePreview" class="json-view source-preview"></pre>
+              </section>
               <div class="json-grid">
                 <section>
                   <h3 id="primaryJsonTitle">原始内容数据</h3>

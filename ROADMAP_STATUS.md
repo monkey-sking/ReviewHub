@@ -1,6 +1,6 @@
 # ReviewHub Roadmap and Status
 
-Last updated: 2026-03-24
+Last updated: 2026-03-25
 
 ## Current status (Phase 1 workbench)
 
@@ -20,32 +20,37 @@ Implemented now:
 - Thread detail and cross-links between queue items, browser handoffs, source files, and thread artifacts
 - Status/platform/risk/project filters plus text search
 - Source-file diagnostics with structured API error details
-- Regression coverage for queue-state logic, write actions, and API safety checks
+- Regression coverage for queue-state logic, write actions, API safety checks, homepage contract, and source-preview parsing
 
 Out of scope today:
 
 - Public deployment and auth/permissions
 - Full chat/comment ingestion
 - Multi-user locking and permission boundaries
-- Rich action history UI and audit browsing
+- Multi-user locking and permission boundaries
 
-## Active hardening work
+## Delivered in this round
 
-These are immediate stability and correctness items:
+- Inspector now includes source-file preview plus detected image / video / link artifacts for queue items
+- Operations view now includes a recent-activity stream that combines queue and thread actions
+- Added deterministic server/homepage regression coverage so the workbench shell and dashboard contract are verified end-to-end
+- Restarted and verified the local runtime on port 4310 against live Ops data
 
-- Keep queue handling fast when the filtered result set grows
-- Tighten action semantics for mixed-source records and cross-link accuracy
-- Add broader browser-level regression around the queue workbench
+## Remaining expansion ideas (not blockers for current delivery)
+
+- Keep queue handling fast when the filtered result set grows further
+- Tighten action semantics for mixed-source records and cross-link accuracy on edge cases
+- Add richer media rendering if later you want inline thumbnails/video playback instead of artifact references only
 
 ## Next roadmap
 
-### Phase 1.1 (stabilize current MVP)
+### Phase 1.1 (stabilize current MVP) — delivered
 
-- Finish workbench hardening around batch actions, follow-up visibility, and inspector clarity
-- Add deterministic browser regressions for queue flows and empty-state transitions
-- Add richer audit browsing beyond the selected queue item
-- Document artifact expectations for ops snapshot and reply/job files
-- Normalize naming and workflows so non-technical operators can use the tool without internal jargon
+- Workbench hardening around batch actions, follow-up visibility, and inspector clarity
+- Deterministic regression coverage for homepage/dashboard contract and key queue flows
+- Richer audit browsing beyond the selected queue item via the recent-activity stream
+- Artifact expectations documented through source preview / artifact extraction in the inspector
+- Naming/workflow stays operator-oriented and local-first
 
 ### Phase 2 (unified operations view)
 

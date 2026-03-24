@@ -752,3 +752,35 @@ select {
     min-width: auto;
   }
 }
+
+.detail-artifact-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.detail-artifact-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  display: grid;
+  gap: 6px;
+}
+
+.detail-artifact-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.detail-artifact-ref {
+  color: var(--muted);
+  font-size: 0.92rem;
+  word-break: break-word;
+}
+
+.source-preview {
+  max-height: 360px;
+}

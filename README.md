@@ -74,6 +74,8 @@ npm test
 - Batch actions for the current filtered queue result set
 - Automatic advance to the next visible queue item after a single-item action
 - Recent action log for the selected queue item in the inspector
+- Source-file preview in the inspector, including detected image/video/link artifacts for queue items
+- Recent activity stream that combines queue and thread actions in the Operations view
 - Thread inbox with local actions: mark ready, follow up, blocked, done, restore auto inference
 - Operations Review panels for review ledger, experiments, feedback snapshot, and browser handoffs
 - Latest Ops run panels for run health and execution snapshot, backed by supervisor, post, reply, fill, metrics, and feedback artifacts

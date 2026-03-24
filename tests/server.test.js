@@ -563,3 +563,40 @@ test('favicon requests return 204 without console-noise 404 fallback', async () 
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   }
 });
+
+
+test('homepage exposes recent activity and source preview inspector sections', async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewhub-server-test-home-'));
+  const approvalPath = path.join(fixtureDir, 'approval_registry.json');
+  const queuePath = path.join(fixtureDir, 'daily_channel_queue.json');
+
+  fs.writeFileSync(
+    approvalPath,
+    JSON.stringify({ schema_version: 'test', updated_at_utc: '2026-03-24T00:00:00.000Z', entries: [] })
+  );
+  fs.writeFileSync(
+    queuePath,
+    JSON.stringify({ schema_version: 'test', run_date: '2026-03-24', items: [], status_counts: {} })
+  );
+
+  const { child, port } = await startServerWithEnv({
+    APPROVAL_REGISTRY_PATH: approvalPath,
+    DAILY_CHANNEL_QUEUE_PATH: queuePath
+  });
+
+  try {
+    const homeResponse = await request('127.0.0.1', port, '/');
+    assert.equal(homeResponse.statusCode, 200);
+    assert.match(homeResponse.body, /recentActivityList/);
+    assert.match(homeResponse.body, /sourcePreviewPanel/);
+
+    const dashboardResponse = await request('127.0.0.1', port, '/api/dashboard');
+    assert.equal(dashboardResponse.statusCode, 200);
+    const payload = JSON.parse(dashboardResponse.body);
+    assert.equal(typeof payload.recent_activity, 'object');
+    assert.equal(Array.isArray(payload.recent_activity.entries), true);
+  } finally {
+    await stopServer(child);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});

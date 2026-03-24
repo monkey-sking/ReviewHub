@@ -167,6 +167,8 @@ const elements = {
   needsReviewList: document.getElementById('needsReviewList'),
   queueJson: document.getElementById('queueJson'),
   readyToExecuteCount: document.getElementById('readyToExecuteCount'),
+  recentActivityList: document.getElementById('recentActivityList'),
+  recentActivityMeta: document.getElementById('recentActivityMeta'),
   readyToExecuteList: document.getElementById('readyToExecuteList'),
   refreshButton: document.getElementById('refreshButton'),
   resultCount: document.getElementById('resultCount'),
@@ -179,6 +181,9 @@ const elements = {
   runHealthSummary: document.getElementById('runHealthSummary'),
   searchInput: document.getElementById('searchInput'),
   secondaryJsonTitle: document.getElementById('secondaryJsonTitle'),
+  sourceArtifactList: document.getElementById('sourceArtifactList'),
+  sourcePreview: document.getElementById('sourcePreview'),
+  sourcePreviewPanel: document.getElementById('sourcePreviewPanel'),
   statusBanner: document.getElementById('statusBanner'),
   statusFilter: document.getElementById('statusFilter'),
   summaryCards: document.getElementById('summaryCards'),
@@ -255,6 +260,100 @@ function toLocalFileHref(filePath) {
   }
 
   return `file://${encodeURI(normalizedPath)}`;
+}
+
+function renderSourcePreview(sourceDetails) {
+  if (!sourceDetails || (!sourceDetails.preview && (!sourceDetails.artifacts || sourceDetails.artifacts.length === 0))) {
+    elements.sourcePreviewPanel.hidden = true;
+    elements.sourceArtifactList.innerHTML = '';
+    elements.sourcePreview.textContent = '';
+    return;
+  }
+
+  elements.sourcePreviewPanel.hidden = false;
+  const artifacts = Array.isArray(sourceDetails.artifacts) ? sourceDetails.artifacts : [];
+  elements.sourceArtifactList.innerHTML = artifacts.length === 0
+    ? '<div class="empty-state">源文件里还没有识别出明确的图片 / 视频 / 链接资源。</div>'
+    : artifacts.map((artifact) => {
+      const reference = cleanClientValue(artifact.reference);
+      const href = isHttpUrl(reference)
+        ? reference
+        : cleanClientValue(sourceDetails.absolute_path)
+          ? toLocalFileHref(sourceDetails.absolute_path)
+          : '';
+      const kindLabel = artifact.kind === 'image'
+        ? '图片'
+        : artifact.kind === 'video'
+          ? '视频'
+          : '引用';
+
+      return `
+        <article class="detail-artifact-item">
+          <div class="detail-artifact-meta">
+            <strong>${escapeHtml(artifact.label || '未命名资源')}</strong>
+            <span class="tag tag-muted">${escapeHtml(kindLabel)}</span>
+            ${href ? `<a class="button button-link" href="${escapeHtml(href)}" target="_blank" rel="noreferrer">打开</a>` : ''}
+          </div>
+          <div class="detail-artifact-ref">${escapeHtml(reference || '—')}</div>
+        </article>
+      `;
+    }).join('');
+  elements.sourcePreview.textContent = sourceDetails.preview || '源文件暂时不可读。';
+}
+
+function renderRecentActivity() {
+  if (!state.data || !state.data.recent_activity) {
+    elements.recentActivityMeta.textContent = '';
+    elements.recentActivityList.innerHTML = '<div class="empty-state">暂时没有最近动作。</div>';
+    return;
+  }
+
+  const activity = state.data.recent_activity;
+  elements.recentActivityMeta.textContent = `${activity.total_entries || 0} 条`;
+  const entries = Array.isArray(activity.entries) ? activity.entries : [];
+  elements.recentActivityList.innerHTML = entries.length === 0
+    ? '<div class="empty-state">暂时没有最近动作。</div>'
+    : entries.map((entry) => {
+      const targetLabel = entry.kind === 'thread' ? (entry.target_id || '未知回复') : (entry.target_id || '未知内容');
+      const targetButton = entry.kind === 'thread'
+        ? `<button class="button button-link" type="button" data-jump-thread-id="${escapeHtml(entry.target_id || '')}">查看回复</button>`
+        : `<button class="button button-link" type="button" data-jump-item-id="${escapeHtml(entry.target_id || '')}">查看内容</button>`;
+      const noteParts = [entry.note];
+      if (entry.kind === 'queue' && entry.reasons && entry.reasons.length > 0) {
+        noteParts.push(`原因：${translateMissingInfoList(entry.reasons).join('，')}`);
+      }
+      if (entry.kind === 'thread' && entry.manual_state) {
+        noteParts.push(`状态：${getThreadStateLabel(entry.manual_state)}`);
+      }
+      return `
+        <article class="ops-item">
+          <div class="ops-item-top">
+            <strong>${escapeHtml(translateDisplayValue(entry.action || 'unknown'))}</strong>
+            <div class="tag-group">
+              <span class="tag tag-muted">${escapeHtml(entry.kind === 'thread' ? '回复' : '队列')}</span>
+              <span class="tag tag-muted">${escapeHtml(entry.actor || '—')}</span>
+            </div>
+          </div>
+          <span class="ops-item-meta">${escapeHtml(formatDate(entry.timestamp_utc))} · ${escapeHtml(targetLabel)}</span>
+          <span class="ops-item-note">${escapeHtml(noteParts.filter(Boolean).join(' · ') || '没有备注。')}</span>
+          <div class="detail-action-bar">${targetButton}</div>
+        </article>
+      `;
+    }).join('');
+
+  document.querySelectorAll('[data-jump-item-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      navigateToQueueItem(button.dataset.jumpItemId, { resetFilters: true });
+    });
+  });
+
+  document.querySelectorAll('[data-jump-thread-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.selectedThreadId = button.dataset.jumpThreadId;
+      state.detailMode = 'thread';
+      setActiveSection('pipeline', { syncContext: false });
+    });
+  });
 }
 
 function createOptions(selectElement, values, currentValue) {
@@ -1762,6 +1861,7 @@ function renderList() {
   elements.listMeta.textContent = `内容日期 ${state.data.metadata.queue_run_date || '—'}`;
   renderManagementBuckets(state.data.items);
   renderBatchActionPanel();
+  renderRecentActivity();
 
   if (!filteredItems.some((item) => item.id === state.selectedId)) {
     state.selectedId = filteredItems[0] ? filteredItems[0].id : null;
@@ -1970,7 +2070,9 @@ function renderQueueDetail(item) {
     ['处理时间', formatDate(item.review_updated_at)],
     ['审核原因', item.reason || '—'],
     ['备注', item.notes || '—'],
-    ['来源', item.source || '—']
+    ['来源', item.source || '—'],
+    ['源文件可读', item.source_details && item.source_details.available ? '是' : '否'],
+    ['识别资源数', item.source_details ? String(item.source_details.artifact_count || 0) : '0']
   ];
 
   elements.detailGrid.innerHTML = rows
@@ -2011,6 +2113,7 @@ function renderQueueDetail(item) {
   renderContextPanel(contextActions);
   renderActionLogPanel(item);
   renderActionPanel(item);
+  renderSourcePreview(item.source_details || null);
 }
 
 function renderThreadDetail(thread) {
@@ -2130,6 +2233,7 @@ function renderThreadDetail(thread) {
   renderContextPanel(contextActions);
   renderActionLogPanel(thread);
   renderActionPanel(thread);
+  renderSourcePreview(null);
 }
 
 function renderOperationsDetail(record) {
@@ -2179,6 +2283,7 @@ function renderOperationsDetail(record) {
   renderContextPanel(contextActions);
   renderActionLogPanel(null);
   renderActionPanel(null);
+  renderSourcePreview(null);
 }
 
 function renderDetail(item, mode = 'queue', emptyMessage = '请选择一条内容、一条问题记录或一条回复任务。') {
@@ -2189,6 +2294,7 @@ function renderDetail(item, mode = 'queue', emptyMessage = '请选择一条内�
     renderContextPanel([]);
     renderActionLogPanel(null);
     renderActionPanel(null);
+    renderSourcePreview(null);
     return;
   }
 

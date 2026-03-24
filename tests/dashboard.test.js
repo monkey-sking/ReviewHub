@@ -11,12 +11,14 @@ function withFixtureData(approvalData, queueData, callback) {
   const reviewIndexPath = path.join(tempDir, 'review_index.md');
   const experimentLogPath = path.join(tempDir, 'experiment_log.md');
   const actionLogPath = path.join(tempDir, 'reviewhub_action_log.ndjson');
+  const operationsRoot = path.join(tempDir, 'operations-root');
   const runsDir = path.join(tempDir, 'runs');
   const previousApprovalPath = process.env.APPROVAL_REGISTRY_PATH;
   const previousQueuePath = process.env.DAILY_CHANNEL_QUEUE_PATH;
   const previousReviewIndexPath = process.env.REVIEW_INDEX_PATH;
   const previousExperimentLogPath = process.env.EXPERIMENT_LOG_PATH;
   const previousActionLogPath = process.env.REVIEWHUB_ACTION_LOG_PATH;
+  const previousOperationsRoot = process.env.REVIEWHUB_OPERATIONS_ROOT;
   const previousRunsDir = process.env.OPS_RUNS_DIR;
 
   fs.writeFileSync(approvalPath, JSON.stringify(approvalData, null, 2));
@@ -25,12 +27,14 @@ function withFixtureData(approvalData, queueData, callback) {
   fs.writeFileSync(experimentLogPath, '# Experiment Log\n\nDate: 2026-03-24\n');
   fs.writeFileSync(actionLogPath, '');
   fs.mkdirSync(runsDir, { recursive: true });
+  fs.mkdirSync(operationsRoot, { recursive: true });
 
   process.env.APPROVAL_REGISTRY_PATH = approvalPath;
   process.env.DAILY_CHANNEL_QUEUE_PATH = queuePath;
   process.env.REVIEW_INDEX_PATH = reviewIndexPath;
   process.env.EXPERIMENT_LOG_PATH = experimentLogPath;
   process.env.REVIEWHUB_ACTION_LOG_PATH = actionLogPath;
+  process.env.REVIEWHUB_OPERATIONS_ROOT = operationsRoot;
   process.env.OPS_RUNS_DIR = runsDir;
 
   const dashboardModulePath = path.resolve(__dirname, '..', 'lib', 'dashboard.js');
@@ -68,6 +72,12 @@ function withFixtureData(approvalData, queueData, callback) {
       delete process.env.REVIEWHUB_ACTION_LOG_PATH;
     } else {
       process.env.REVIEWHUB_ACTION_LOG_PATH = previousActionLogPath;
+    }
+
+    if (previousOperationsRoot === undefined) {
+      delete process.env.REVIEWHUB_OPERATIONS_ROOT;
+    } else {
+      process.env.REVIEWHUB_OPERATIONS_ROOT = previousOperationsRoot;
     }
 
     if (previousRunsDir === undefined) {
@@ -382,6 +392,68 @@ test('invalid queue schema throws DashboardDataError with schema diagnostics', (
           return true;
         }
       );
+    }
+  );
+});
+
+
+test('dashboard extracts source preview artifacts and recent activity summary', () => {
+  withFixtureData(
+    {
+      schema_version: 'test',
+      updated_at_utc: '2026-03-24T00:00:00.000Z',
+      entries: []
+    },
+    {
+      schema_version: 'test',
+      run_date: '2026-03-24',
+      items: [
+        {
+          item_id: 'queue-source-001',
+          status: 'queued',
+          platform: 'Other',
+          title: 'Queued item with source artifacts',
+          owner: 'ops',
+          source: 'Content/Marketing/source-artifacts.md',
+          notes: '-',
+          risk: 'review'
+        }
+      ]
+    },
+    ({ loadDashboardData }) => {
+      const sourcePath = path.join(process.env.REVIEWHUB_OPERATIONS_ROOT, 'Content', 'Marketing', 'source-artifacts.md');
+      fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+      fs.writeFileSync(
+        sourcePath,
+        [
+          '# Launch post',
+          '',
+          '![封面图](https://cdn.example.com/cover.png)',
+          '',
+          '<!-- 演示视频 https://cdn.example.com/demo.mp4 -->',
+          '',
+          '[落地页](https://example.com/launch)'
+        ].join('\n')
+      );
+      fs.writeFileSync(
+        process.env.REVIEWHUB_ACTION_LOG_PATH,
+        JSON.stringify({
+          timestamp_utc: '2026-03-24T10:00:00.000Z',
+          actor: '@tester',
+          item_id: 'queue-source-001',
+          action: 'mark_ready',
+          note: 'source verified'
+        }) + '\n',
+        'utf8'
+      );
+
+      const dashboard = loadDashboardData();
+      assert.equal(dashboard.items[0].source_details.available, true);
+      assert.ok(dashboard.items[0].source_details.artifact_count >= 3);
+      assert.equal(dashboard.items[0].source_details.artifacts[0].kind, 'image');
+      assert.equal(dashboard.recent_activity.total_entries, 1);
+      assert.equal(dashboard.recent_activity.entries[0].target_id, 'queue-source-001');
+      assert.match(dashboard.items[0].source_details.preview, /Launch post/);
     }
   );
 });
