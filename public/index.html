@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,118 +10,352 @@
     <div class="page-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">Local review console</p>
+          <p class="eyebrow">本地处理台</p>
           <h1>ReviewHub</h1>
-          <p class="subtitle">Read-only view for approvals and daily queue.</p>
+          <p class="subtitle">查看并处理待发布内容、问题记录和自动执行状态。</p>
         </div>
-        <button id="refreshButton" class="button" type="button">Refresh</button>
+        <button id="refreshButton" class="button" type="button">刷新</button>
       </header>
 
-      <section id="statusBanner" class="status-banner">Loading data…</section>
+      <section id="statusBanner" class="status-banner">正在加载数据…</section>
 
-      <section id="summaryCards" class="summary-grid" aria-label="Summary"></section>
-
-      <section class="management-grid" aria-label="Management buckets">
-        <section class="card bucket-card">
-          <div class="panel-heading">
-            <div>
-              <h2>Needs review</h2>
-              <p>Approval-pending items ready for a human decision.</p>
+      <section class="workspace-shell">
+        <main class="workspace-main">
+          <section class="card workspace-nav-card">
+            <div class="panel-heading">
+              <div>
+                <h2>功能分区</h2>
+                <p>按工作步骤切换，不再把所有内容堆在一屏里。</p>
+              </div>
             </div>
-            <div id="needsReviewCount" class="panel-meta"></div>
-          </div>
-          <div id="needsReviewList" class="bucket-list"></div>
-        </section>
-
-        <section class="card bucket-card">
-          <div class="panel-heading">
-            <div>
-              <h2>Ready to execute</h2>
-              <p>Queued items with enough context for the next execution step.</p>
+            <div class="workspace-tab-row" role="tablist" aria-label="工作区分区">
+              <button class="workspace-tab is-active" data-section-tab="overview" type="button">今日概况</button>
+              <button class="workspace-tab" data-section-tab="queue" type="button">待处理内容</button>
+              <button class="workspace-tab" data-section-tab="operations" type="button">问题记录</button>
+              <button class="workspace-tab" data-section-tab="pipeline" type="button">自动执行</button>
             </div>
-            <div id="readyToExecuteCount" class="panel-meta"></div>
-          </div>
-          <div id="readyToExecuteList" class="bucket-list"></div>
-        </section>
+            <div id="workspaceHighlights" class="workspace-highlights"></div>
+          </section>
 
-        <section class="card bucket-card">
-          <div class="panel-heading">
-            <div>
-              <h2>Needs info</h2>
-              <p>Records missing approval mapping, owner, or decision context.</p>
+          <section class="workspace-panel" data-section-panel="overview">
+            <div class="section-intro">
+              <p class="section-kicker">Overview</p>
+              <div>
+                <h2>今日概况</h2>
+                <p>先看今天有多少内容待处理，再看哪些能继续、哪些资料不全。</p>
+              </div>
             </div>
-            <div id="needsInfoCount" class="panel-meta"></div>
-          </div>
-          <div id="needsInfoList" class="bucket-list"></div>
-        </section>
-      </section>
 
-      <section class="card filters-card">
-        <div class="panel-heading">
-          <div>
-            <h2>Filters</h2>
-            <p>Keep it simple: status, platform, risk.</p>
-          </div>
-          <div id="resultCount" class="panel-meta"></div>
-        </div>
-        <div class="filters-row filters-row-search">
-          <label>
-            <span>Project</span>
-            <select id="projectFilter"></select>
-          </label>
-          <label>
-            <span>Status</span>
-            <select id="statusFilter"></select>
-          </label>
-          <label>
-            <span>Platform</span>
-            <select id="platformFilter"></select>
-          </label>
-          <label>
-            <span>Risk</span>
-            <select id="riskFilter"></select>
-          </label>
-          <label class="search-field">
-            <span>Search</span>
-            <input id="searchInput" type="search" placeholder="Title / notes / source" />
-          </label>
-        </div>
-      </section>
+            <section id="summaryCards" class="summary-grid" aria-label="汇总"></section>
 
-      <section class="content-grid">
-        <section class="card list-card">
-          <div class="panel-heading">
-            <div>
-              <h2>Main List</h2>
-              <p>Shows `approval_pending` and `queued` items.</p>
-            </div>
-            <div id="listMeta" class="panel-meta"></div>
-          </div>
-          <div id="itemList" class="item-list"></div>
-        </section>
-
-        <section class="card detail-card">
-          <div class="panel-heading">
-            <div>
-              <h2>Details</h2>
-              <p>Selected item + matched approval fields.</p>
-            </div>
-          </div>
-          <div id="detailEmpty" class="empty-state">Select an item from the list.</div>
-          <div id="detailView" hidden>
-            <div class="detail-grid" id="detailGrid"></div>
-            <div class="json-grid">
-              <section>
-                <h3>Queue JSON</h3>
-                <pre id="queueJson" class="json-view"></pre>
+            <section class="management-grid" aria-label="管理分桶">
+              <section class="card bucket-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>等你决定</h2>
+                    <p>这些内容已经进入人工判断阶段，需要你决定要不要继续。</p>
+                  </div>
+                  <div id="needsReviewCount" class="panel-meta"></div>
+                </div>
+                <div id="needsReviewList" class="bucket-list"></div>
               </section>
-              <section>
-                <h3>Approval JSON</h3>
-                <pre id="approvalJson" class="json-view"></pre>
+
+              <section class="card bucket-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>可以继续</h2>
+                    <p>这些内容资料齐全，已经可以往下一步走。</p>
+                  </div>
+                  <div id="readyToExecuteCount" class="panel-meta"></div>
+                </div>
+                <div id="readyToExecuteList" class="bucket-list"></div>
               </section>
+
+              <section class="card bucket-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>资料不全</h2>
+                    <p>这些内容还缺资料，暂时不能继续处理。</p>
+                  </div>
+                  <div id="needsInfoCount" class="panel-meta"></div>
+                </div>
+                <div id="needsInfoList" class="bucket-list"></div>
+              </section>
+            </section>
+          </section>
+
+          <section class="workspace-panel" data-section-panel="queue" hidden>
+            <div class="section-intro">
+              <p class="section-kicker">Queue Desk</p>
+              <div>
+                <h2>待处理内容</h2>
+                <p>在这里一条条看内容，然后决定通过、驳回，或标记缺资料。</p>
+              </div>
             </div>
-          </div>
-        </section>
+
+            <section class="card filters-card">
+              <div class="panel-heading">
+                <div>
+                  <h2>条件筛选</h2>
+                  <p>先按状态、平台和风险收窄范围，再逐条处理。</p>
+                </div>
+                <div id="resultCount" class="panel-meta"></div>
+              </div>
+              <div class="filters-row filters-row-search">
+                <label>
+                  <span>项目</span>
+                  <select id="projectFilter"></select>
+                </label>
+                <label>
+                  <span>状态</span>
+                  <select id="statusFilter"></select>
+                </label>
+                <label>
+                  <span>平台</span>
+                  <select id="platformFilter"></select>
+                </label>
+                <label>
+                  <span>风险</span>
+                  <select id="riskFilter"></select>
+                </label>
+                <label class="search-field">
+                  <span>搜索</span>
+                  <input id="searchInput" type="search" placeholder="标题 / 备注 / 来源" />
+                </label>
+              </div>
+            </section>
+
+            <section id="batchActionPanel" class="card batch-card">
+              <div class="panel-heading">
+                <div>
+                  <h2>批量处理</h2>
+                  <p>对当前筛选结果一次性执行同一个动作，适合清一批同类任务。</p>
+                </div>
+                <div id="batchActionSummary" class="panel-meta"></div>
+              </div>
+              <div class="batch-action-layout">
+                <label class="detail-note-field detail-inline-field">
+                  <span>处理人</span>
+                  <input
+                    id="batchActionActor"
+                    type="text"
+                    placeholder="@reviewhub"
+                    autocomplete="off"
+                  />
+                </label>
+                <label class="detail-note-field batch-note-field">
+                  <span>批量备注</span>
+                  <textarea
+                    id="batchActionNote"
+                    rows="3"
+                    placeholder="给这一批内容统一留下结论或补充说明"
+                  ></textarea>
+                </label>
+              </div>
+              <div id="batchActionStatus" class="detail-action-status batch-action-status"></div>
+              <div id="batchActionBar" class="detail-action-bar"></div>
+            </section>
+
+            <section class="queue-shell">
+              <section class="card list-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>待处理列表</h2>
+                    <p>这里列出今天需要你处理的内容。</p>
+                  </div>
+                  <div id="listMeta" class="panel-meta"></div>
+                </div>
+                <div id="itemList" class="item-list"></div>
+              </section>
+            </section>
+          </section>
+
+          <section class="workspace-panel" data-section-panel="operations" hidden>
+            <div class="section-intro">
+              <p class="section-kicker">Ops Review</p>
+              <div>
+                <h2>问题记录</h2>
+                <p>这里集中放最近的审核记录、试验、反馈和待自动发布内容。</p>
+              </div>
+            </div>
+
+            <section class="operations-grid" aria-label="问题记录">
+              <section class="card operations-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>审核记录</h2>
+                    <p>最近看过哪些问题、卡在哪里、谁在跟进。</p>
+                  </div>
+                  <div id="reviewLedgerMeta" class="panel-meta"></div>
+                </div>
+                <div id="reviewLedgerList" class="ops-list"></div>
+              </section>
+
+              <section class="card operations-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>试验记录</h2>
+                    <p>最近在试什么、现在到哪一步、下一步做什么。</p>
+                  </div>
+                  <div id="experimentMeta" class="panel-meta"></div>
+                </div>
+                <div id="experimentList" class="ops-list"></div>
+              </section>
+
+              <section class="card operations-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>问题反馈</h2>
+                    <p>最近报错和用户反馈集中在哪里。</p>
+                  </div>
+                  <div id="feedbackMeta" class="panel-meta"></div>
+                </div>
+                <div id="feedbackSummary" class="ops-list"></div>
+              </section>
+
+              <section class="card operations-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>待自动发布</h2>
+                    <p>已经准备到自动发布这一步的内容。</p>
+                  </div>
+                  <div id="handoffMeta" class="panel-meta"></div>
+                </div>
+                <div id="handoffList" class="ops-list"></div>
+              </section>
+            </section>
+          </section>
+
+          <section class="workspace-panel" data-section-panel="pipeline" hidden>
+            <div class="section-intro">
+              <p class="section-kicker">Execution</p>
+              <div>
+                <h2>自动执行</h2>
+                <p>这里查看自动流程有没有跑起来，哪里卡住，需要谁接手。</p>
+              </div>
+            </div>
+
+            <section class="operations-grid pipeline-grid" aria-label="自动执行">
+              <section class="card operations-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>自动化状态</h2>
+                    <p>看自动流程整体是否正常。</p>
+                  </div>
+                  <div id="runHealthMeta" class="panel-meta"></div>
+                </div>
+                <div id="runHealthSummary" class="ops-list"></div>
+              </section>
+
+              <section class="card operations-card">
+                <div class="panel-heading">
+                  <div>
+                    <h2>执行进度</h2>
+                    <p>看自动发布和自动回复现在做到哪一步。</p>
+                  </div>
+                  <div id="executionSnapshotMeta" class="panel-meta"></div>
+                </div>
+                <div id="executionSnapshotSummary" class="ops-list"></div>
+              </section>
+
+              <section class="card operations-card ops-card-wide">
+                <div class="panel-heading">
+                  <div>
+                    <h2>待人工回复</h2>
+                    <p>最近生成的回复任务，可能需要你人工接手。</p>
+                  </div>
+                  <div class="panel-heading-side">
+                    <label class="panel-inline-field">
+                      <span>列表</span>
+                      <select id="threadInboxFilter">
+                        <option value="needs_reply">待人工判断</option>
+                        <option value="ready">可直接回复</option>
+                        <option value="follow_up">待跟进</option>
+                        <option value="blocked">已阻塞</option>
+                        <option value="done">已处理</option>
+                        <option value="all">全部</option>
+                      </select>
+                    </label>
+                    <div id="bossThreadsMeta" class="panel-meta"></div>
+                  </div>
+                </div>
+                <div id="bossThreadsSummary" class="ops-list"></div>
+              </section>
+            </section>
+          </section>
+        </main>
+
+        <aside class="workspace-inspector">
+          <section class="card detail-card">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">Details</p>
+                <h2 id="detailTitle">详细信息</h2>
+                <p id="detailSubtitle">这里显示当前选中的内容、问题记录或回复任务。</p>
+              </div>
+            </div>
+            <div id="detailEmpty" class="empty-state">请选择一条内容、一条问题记录或一条回复任务。</div>
+            <div id="detailView" hidden>
+              <section id="detailActionPanel" class="detail-action-panel" hidden>
+                <div class="detail-action-heading">
+                  <div>
+                    <h3>直接处理</h3>
+                    <p>在这里直接给出处理结果，不用再跳出去。</p>
+                  </div>
+                  <div id="detailActionStatus" class="detail-action-status"></div>
+                </div>
+                <label class="detail-note-field detail-inline-field">
+                  <span>处理人</span>
+                  <input
+                    id="detailActionActor"
+                    type="text"
+                    placeholder="@reviewhub"
+                    autocomplete="off"
+                  />
+                </label>
+                <label class="detail-note-field">
+                  <span>处理备注</span>
+                  <textarea
+                    id="detailActionNote"
+                    rows="3"
+                    placeholder="记录处理结论、缺的资料或补充说明"
+                  ></textarea>
+                </label>
+                <div id="detailActionBar" class="detail-action-bar"></div>
+              </section>
+              <section id="detailContextPanel" class="detail-action-panel" hidden>
+                <div class="detail-action-heading">
+                  <div>
+                    <h3>相关入口</h3>
+                    <p>从这里快速跳到相关内容、原文件或目标页面。</p>
+                  </div>
+                </div>
+                <div id="detailContextBar" class="detail-action-bar"></div>
+              </section>
+              <section id="actionLogPanel" class="detail-action-panel" hidden>
+                <div class="detail-action-heading">
+                  <div>
+                    <h3>最近处理记录</h3>
+                    <p>这里显示当前选中记录最近被谁处理过、处理成什么结果。</p>
+                  </div>
+                  <div id="actionLogMeta" class="detail-action-status batch-action-status"></div>
+                </div>
+                <div id="actionLogList" class="ops-list"></div>
+              </section>
+              <div class="detail-grid" id="detailGrid"></div>
+              <div class="json-grid">
+                <section>
+                  <h3 id="primaryJsonTitle">原始内容数据</h3>
+                  <pre id="queueJson" class="json-view"></pre>
+                </section>
+                <section>
+                  <h3 id="secondaryJsonTitle">原始审核数据</h3>
+                  <pre id="approvalJson" class="json-view"></pre>
+                </section>
+              </div>
+            </div>
+          </section>
+        </aside>
       </section>
     </div>
 

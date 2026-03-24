@@ -1,10 +1,10 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { loadDashboardData } = require('./lib/dashboard');
+const { DashboardDataError, loadDashboardData } = require('./lib/dashboard');
+const { QueueActionError, applyQueueAction, applyQueueActionsBatch } = require('./lib/queueActions');
+const { ThreadActionError, applyThreadAction } = require('./lib/threadActions');
 
-const PORT = Number(process.env.PORT || 4310);
-const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const MIME_TYPES = {
@@ -60,66 +60,221 @@ function sendFile(response, filePath) {
   });
 }
 
-function getPublicFilePath(requestPath) {
-  const decodedPath = decodeURIComponent(requestPath || '/');
-  const relativePath = decodedPath === '/' ? 'index.html' : decodedPath.replace(/^\/+/, '');
-  const filePath = path.normalize(path.join(PUBLIC_DIR, relativePath));
+function readJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = '';
 
-  if (!filePath.startsWith(PUBLIC_DIR)) {
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => {
+      body += chunk;
+
+      if (Buffer.byteLength(body, 'utf8') > 1024 * 1024) {
+        reject(new QueueActionError('请求体过大。', { statusCode: 413 }));
+      }
+    });
+    request.on('end', () => {
+      if (!body.trim()) {
+        resolve({});
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(body));
+      } catch (_error) {
+        reject(new QueueActionError('请求体必须是合法 JSON。'));
+      }
+    });
+    request.on('error', reject);
+  });
+}
+
+function sendActionError(response, error) {
+  if (error instanceof QueueActionError || error instanceof ThreadActionError) {
+    sendJson(response, error.statusCode, {
+      error: error.message,
+      details: error.details || null
+    });
+    return;
+  }
+
+  console.error(`[${new Date().toISOString()}] Queue action failed`, error);
+  sendJson(response, 500, { error: '处理队列动作时发生内部错误。' });
+}
+
+function getPublicFilePath(requestPath, publicDir = PUBLIC_DIR) {
+  let decodedPath;
+
+  try {
+    decodedPath = decodeURIComponent(requestPath || '/');
+  } catch (_error) {
+    return null;
+  }
+
+  const relativePath = decodedPath === '/' ? 'index.html' : decodedPath.replace(/^\/+/, '');
+  const filePath = path.resolve(publicDir, relativePath);
+  const relativeToPublic = path.relative(publicDir, filePath);
+
+  if (relativeToPublic.startsWith('..') || path.isAbsolute(relativeToPublic)) {
     return null;
   }
 
   return filePath;
 }
 
-const server = http.createServer((request, response) => {
-  attachRequestLogger(request, response);
-  const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+function createServer() {
+  return http.createServer((request, response) => {
+    attachRequestLogger(request, response);
 
-  if (request.method === 'GET' && url.pathname === '/api/health') {
-    sendJson(response, 200, {
-      ok: true,
-      service: 'ReviewHub',
-      generated_at: new Date().toISOString()
-    });
-    return;
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/dashboard') {
     try {
-      sendJson(response, 200, loadDashboardData());
+      const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+
+      if (request.method === 'GET' && url.pathname === '/api/health') {
+        sendJson(response, 200, {
+          ok: true,
+          service: 'ReviewHub',
+          generated_at: new Date().toISOString()
+        });
+        return;
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/dashboard') {
+        try {
+          sendJson(response, 200, loadDashboardData());
+        } catch (error) {
+          console.error(`[${new Date().toISOString()}] Failed to load dashboard data`, error);
+          const payload = {
+            error: '加载 ReviewHub 数据失败。',
+            message: error.message
+          };
+
+          if (error instanceof DashboardDataError) {
+            payload.details = error.details;
+            payload.source_files = error.source_files;
+          }
+
+          sendJson(response, 500, payload);
+        }
+        return;
+      }
+
+      if (request.method === 'GET' && url.pathname === '/favicon.ico') {
+        response.writeHead(204, {
+          'Cache-Control': 'no-store'
+        });
+        response.end();
+        return;
+      }
+
+      const queueActionMatch = url.pathname.match(/^\/api\/queue\/([^/]+)\/action$/);
+      const threadActionMatch = url.pathname.match(/^\/api\/thread\/([^/]+)\/action$/);
+
+      if (request.method === 'POST' && url.pathname === '/api/queue/actions') {
+        readJsonBody(request)
+          .then((payload) => {
+            const result = applyQueueActionsBatch({
+              itemIds: payload && payload.item_ids,
+              action: payload && payload.action,
+              note: payload && payload.note,
+              actor: payload && payload.actor,
+              reasons: payload && payload.reasons
+            });
+            sendJson(response, 200, result);
+          })
+          .catch((error) => {
+            sendActionError(response, error);
+          });
+        return;
+      }
+
+      if (request.method === 'POST' && queueActionMatch) {
+        const itemId = decodeURIComponent(queueActionMatch[1]);
+
+        readJsonBody(request)
+          .then((payload) => {
+            const result = applyQueueAction({
+              itemId,
+              action: payload && payload.action,
+              note: payload && payload.note,
+              actor: payload && payload.actor,
+              reasons: payload && payload.reasons
+            });
+            sendJson(response, 200, result);
+          })
+          .catch((error) => {
+            sendActionError(response, error);
+          });
+        return;
+      }
+
+      if (request.method === 'POST' && threadActionMatch) {
+        const replyId = decodeURIComponent(threadActionMatch[1]);
+
+        readJsonBody(request)
+          .then((payload) => {
+            const result = applyThreadAction({
+              replyId,
+              action: payload && payload.action,
+              note: payload && payload.note,
+              actor: payload && payload.actor
+            });
+            sendJson(response, 200, result);
+          })
+          .catch((error) => {
+            sendActionError(response, error);
+          });
+        return;
+      }
+
+      if (request.method !== 'GET') {
+        sendJson(response, 405, { error: '不支持该请求方法。' });
+        return;
+      }
+
+      const filePath = getPublicFilePath(url.pathname);
+
+      if (!filePath) {
+        sendText(response, 400, '路径无效');
+        return;
+      }
+
+      sendFile(response, filePath);
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Failed to load dashboard data`, error);
-      sendJson(response, 500, {
-        error: 'Failed to load ReviewHub data.',
-        message: error.message
-      });
+      console.error(`[${new Date().toISOString()}] Unhandled request error`, error);
+
+      if (!response.headersSent) {
+        sendJson(response, 500, { error: '服务器内部错误。' });
+      } else {
+        response.end();
+      }
     }
-    return;
-  }
-
-  if (request.method !== 'GET') {
-    sendJson(response, 405, { error: 'Method not allowed.' });
-    return;
-  }
-
-  const filePath = getPublicFilePath(url.pathname);
-
-  if (!filePath) {
-    sendText(response, 400, 'Invalid path');
-    return;
-  }
-
-  sendFile(response, filePath);
-});
-
-server.listen(PORT, HOST, () => {
-  console.log(`ReviewHub running at http://${HOST}:${PORT}`);
-  console.log(`ReviewHub health check at http://${HOST}:${PORT}/api/health`);
-});
-
-process.on('SIGINT', () => {
-  server.close(() => {
-    process.exit(0);
   });
-});
+}
+
+function startServer(options = {}) {
+  const port = Number(options.port ?? process.env.PORT ?? 4310);
+  const host = options.host ?? process.env.HOST ?? '127.0.0.1';
+  const server = createServer();
+
+  server.listen(port, host, () => {
+    console.log(`ReviewHub running at http://${host}:${port}`);
+    console.log(`ReviewHub health check at http://${host}:${port}/api/health`);
+  });
+
+  return server;
+}
+
+if (require.main === module) {
+  const server = startServer();
+
+  process.on('SIGINT', () => {
+    server.close(() => {
+      process.exit(0);
+    });
+  });
+}
+
+module.exports = {
+  createServer,
+  getPublicFilePath,
+  startServer
+};
