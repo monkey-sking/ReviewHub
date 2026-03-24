@@ -1,6 +1,7 @@
 const state = {
   data: null,
   filters: {
+    project: 'all',
     status: 'all',
     platform: 'all',
     risk: 'all'
@@ -18,6 +19,7 @@ const elements = {
   queueJson: document.getElementById('queueJson'),
   refreshButton: document.getElementById('refreshButton'),
   resultCount: document.getElementById('resultCount'),
+  projectFilter: document.getElementById('projectFilter'),
   riskFilter: document.getElementById('riskFilter'),
   statusBanner: document.getElementById('statusBanner'),
   statusFilter: document.getElementById('statusFilter'),
@@ -84,7 +86,8 @@ function renderSummary() {
 }
 
 function renderFilters() {
-  const { statuses, platforms, risks } = state.data.filters;
+  const { statuses, platforms, projects, risks } = state.data.filters;
+  createOptions(elements.projectFilter, projects, state.filters.project);
   createOptions(elements.statusFilter, statuses, state.filters.status);
   createOptions(elements.platformFilter, platforms, state.filters.platform);
   createOptions(elements.riskFilter, risks, state.filters.risk);
@@ -92,11 +95,12 @@ function renderFilters() {
 
 function getFilteredItems() {
   return state.data.items.filter((item) => {
+    const projectMatch = state.filters.project === 'all' || item.project === state.filters.project;
     const statusMatch = state.filters.status === 'all' || item.status === state.filters.status;
     const platformMatch = state.filters.platform === 'all' || item.platform === state.filters.platform;
     const riskMatch = state.filters.risk === 'all' || item.risk === state.filters.risk;
 
-    return statusMatch && platformMatch && riskMatch;
+    return projectMatch && statusMatch && platformMatch && riskMatch;
   });
 }
 
@@ -127,6 +131,7 @@ function renderList() {
           <div class="item-row-top">
             <strong>${escapeHtml(item.title)}</strong>
             <div class="tag-group">
+              <span class="tag tag-project">${escapeHtml(item.project || 'Unassigned')}</span>
               <span class="tag tag-status">${escapeHtml(item.status)}</span>
               <span class="tag tag-risk">${escapeHtml(item.risk)}</span>
               ${approvalTag}
@@ -164,6 +169,7 @@ function renderDetail(item) {
 
   const rows = [
     ['Title', item.title || '—'],
+    ['Project', item.project || '—'],
     ['Platform', item.platform || '—'],
     ['Status', item.status || '—'],
     ['Risk', item.risk || '—'],
@@ -196,6 +202,7 @@ function renderDetail(item) {
 }
 
 function syncFiltersFromInputs() {
+  state.filters.project = elements.projectFilter.value;
   state.filters.status = elements.statusFilter.value;
   state.filters.platform = elements.platformFilter.value;
   state.filters.risk = elements.riskFilter.value;
@@ -234,6 +241,7 @@ async function loadData() {
   }
 }
 
+elements.projectFilter.addEventListener('change', syncFiltersFromInputs);
 elements.statusFilter.addEventListener('change', syncFiltersFromInputs);
 elements.platformFilter.addEventListener('change', syncFiltersFromInputs);
 elements.riskFilter.addEventListener('change', syncFiltersFromInputs);

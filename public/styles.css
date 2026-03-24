@@ -148,6 +148,10 @@ h3 {
   gap: 12px;
 }
 
+.filters-row-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 label {
   display: flex;
   flex-direction: column;
@@ -221,6 +225,10 @@ select {
   padding: 4px 10px;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.tag-project {
+  background: #e8f7ec;
 }
 
 .tag-status {
