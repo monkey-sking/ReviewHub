@@ -357,6 +357,43 @@ test('queue action endpoint approves items and persists the new state', async ()
   }
 });
 
+test('queue action rejects malformed encoded id with 400', async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewhub-server-test-malformed-'));
+  const approvalPath = path.join(fixtureDir, 'approval_registry.json');
+  const queuePath = path.join(fixtureDir, 'daily_channel_queue.json');
+
+  fs.writeFileSync(
+    approvalPath,
+    JSON.stringify({ schema_version: 'test', updated_at_utc: '2026-03-24T00:00:00.000Z', entries: [] })
+  );
+  fs.writeFileSync(
+    queuePath,
+    JSON.stringify({ schema_version: 'test', run_date: '2026-03-24', items: [], status_counts: {} })
+  );
+
+  const { child, port } = await startServerWithEnv({
+    APPROVAL_REGISTRY_PATH: approvalPath,
+    DAILY_CHANNEL_QUEUE_PATH: queuePath
+  });
+
+  try {
+    const response = await request('127.0.0.1', port, '/api/queue/%E0%A4%A/action', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8'
+      },
+      body: JSON.stringify({ action: 'mark_ready' })
+    });
+
+    assert.equal(response.statusCode, 400);
+    const payload = JSON.parse(response.body);
+    assert.equal(payload.error, '路径编码无效。');
+  } finally {
+    await stopServer(child);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test('queue batch action endpoint updates multiple items and persists the new state', async () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewhub-server-test-batch-action-'));
   const approvalPath = path.join(fixtureDir, 'approval_registry.json');
@@ -533,6 +570,81 @@ test('thread action endpoint persists local review state for reply tasks', async
   }
 });
 
+test('ops action endpoint persists local follow-up state for review records', async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewhub-server-test-ops-action-'));
+  const approvalPath = path.join(fixtureDir, 'approval_registry.json');
+  const queuePath = path.join(fixtureDir, 'daily_channel_queue.json');
+  const operationsRoot = path.join(fixtureDir, 'ops-root');
+  const stateDir = path.join(operationsRoot, 'Ops', 'state');
+  const runsRoot = path.join(operationsRoot, 'Ops', 'runs');
+  const reviewIndexPath = path.join(stateDir, 'review_index.md');
+  const experimentLogPath = path.join(stateDir, 'experiment_log.md');
+  const opsActionLogPath = path.join(stateDir, 'reviewhub_ops_action_log.ndjson');
+
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(runsRoot, { recursive: true });
+  fs.writeFileSync(
+    reviewIndexPath,
+    [
+      '# Review Index',
+      '',
+      'Date: 2026-03-25',
+      '',
+      '| date_yyyy_mm_dd_ | job | focus | status | follow_up_owner | blocker_notes |',
+      '| --- | --- | --- | --- | --- | --- |',
+      '| 2026-03-25 | Review pricing page | Messaging | red | ops | Needs manual fix |'
+    ].join('\n')
+  );
+  fs.writeFileSync(experimentLogPath, '# Experiment Log\n\nDate: 2026-03-25\n');
+  fs.writeFileSync(opsActionLogPath, '');
+  fs.writeFileSync(
+    approvalPath,
+    JSON.stringify({ schema_version: 'test', updated_at_utc: '2026-03-25T00:00:00.000Z', entries: [] }, null, 2)
+  );
+  fs.writeFileSync(
+    queuePath,
+    JSON.stringify({ schema_version: 'test', run_date: '2026-03-25', items: [], status_counts: {} }, null, 2)
+  );
+
+  const { child, port } = await startServerWithEnv({
+    APPROVAL_REGISTRY_PATH: approvalPath,
+    DAILY_CHANNEL_QUEUE_PATH: queuePath,
+    REVIEWHUB_OPERATIONS_ROOT: operationsRoot,
+    REVIEWHUB_OPS_RUNS_ROOT: runsRoot,
+    REVIEW_INDEX_PATH: reviewIndexPath,
+    EXPERIMENT_LOG_PATH: experimentLogPath,
+    REVIEWHUB_OPS_ACTION_LOG_PATH: opsActionLogPath
+  });
+
+  try {
+    const dashboardResponse = await request('127.0.0.1', port, '/api/dashboard');
+    assert.equal(dashboardResponse.statusCode, 200, dashboardResponse.body);
+    const dashboardPayload = JSON.parse(dashboardResponse.body);
+    const reviewRecord = dashboardPayload.operations_record_catalog.find((record) => record.ui_id === 'review:0');
+    assert.ok(reviewRecord);
+
+    const actionResponse = await request('127.0.0.1', port, `/api/ops/${encodeURIComponent(reviewRecord.action_id)}/action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8'
+      },
+      body: JSON.stringify({
+        action: 'mark_execute',
+        note: '推进处理'
+      })
+    });
+
+    assert.equal(actionResponse.statusCode, 200, actionResponse.body);
+    const payload = JSON.parse(actionResponse.body);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.record.review_state, 'execute');
+    assert.match(fs.readFileSync(opsActionLogPath, 'utf8'), /"action":"mark_execute"/);
+  } finally {
+    await stopServer(child);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test('favicon requests return 204 without console-noise 404 fallback', async () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewhub-server-test-favicon-'));
   const approvalPath = path.join(fixtureDir, 'approval_registry.json');
@@ -565,7 +677,7 @@ test('favicon requests return 204 without console-noise 404 fallback', async () 
 });
 
 
-test('homepage exposes recent activity and source preview inspector sections', async () => {
+test('homepage exposes recent activity, daily processing, signal stream, and source preview sections', async () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewhub-server-test-home-'));
   const approvalPath = path.join(fixtureDir, 'approval_registry.json');
   const queuePath = path.join(fixtureDir, 'daily_channel_queue.json');
@@ -588,6 +700,8 @@ test('homepage exposes recent activity and source preview inspector sections', a
     const homeResponse = await request('127.0.0.1', port, '/');
     assert.equal(homeResponse.statusCode, 200);
     assert.match(homeResponse.body, /recentActivityList/);
+    assert.match(homeResponse.body, /processingLaneList/);
+    assert.match(homeResponse.body, /signalStreamList/);
     assert.match(homeResponse.body, /sourcePreviewPanel/);
 
     const dashboardResponse = await request('127.0.0.1', port, '/api/dashboard');
@@ -595,6 +709,10 @@ test('homepage exposes recent activity and source preview inspector sections', a
     const payload = JSON.parse(dashboardResponse.body);
     assert.equal(typeof payload.recent_activity, 'object');
     assert.equal(Array.isArray(payload.recent_activity.entries), true);
+    assert.equal(typeof payload.daily_processing_queue, 'object');
+    assert.equal(Array.isArray(payload.daily_processing_queue.entries), true);
+    assert.equal(typeof payload.signal_stream, 'object');
+    assert.equal(Array.isArray(payload.signal_stream.entries), true);
   } finally {
     await stopServer(child);
     fs.rmSync(fixtureDir, { recursive: true, force: true });

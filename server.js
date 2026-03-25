@@ -4,6 +4,7 @@ const path = require('path');
 const { DashboardDataError, loadDashboardData } = require('./lib/dashboard');
 const { QueueActionError, applyQueueAction, applyQueueActionsBatch } = require('./lib/queueActions');
 const { ThreadActionError, applyThreadAction } = require('./lib/threadActions');
+const { OpsActionError, applyOpsAction } = require('./lib/operationsActions');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
@@ -40,6 +41,15 @@ function sendText(response, statusCode, text) {
     'Content-Type': 'text/plain; charset=utf-8'
   });
   response.end(text);
+}
+
+function decodeActionSegment(response, segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch (_error) {
+    sendJson(response, 400, { error: '路径编码无效。', details: null });
+    return null;
+  }
 }
 
 function sendFile(response, filePath) {
@@ -89,7 +99,7 @@ function readJsonBody(request) {
 }
 
 function sendActionError(response, error) {
-  if (error instanceof QueueActionError || error instanceof ThreadActionError) {
+  if (error instanceof QueueActionError || error instanceof ThreadActionError || error instanceof OpsActionError) {
     sendJson(response, error.statusCode, {
       error: error.message,
       details: error.details || null
@@ -167,6 +177,7 @@ function createServer() {
 
       const queueActionMatch = url.pathname.match(/^\/api\/queue\/([^/]+)\/action$/);
       const threadActionMatch = url.pathname.match(/^\/api\/thread\/([^/]+)\/action$/);
+      const opsActionMatch = url.pathname.match(/^\/api\/ops\/([^/]+)\/action$/);
 
       if (request.method === 'POST' && url.pathname === '/api/queue/actions') {
         readJsonBody(request)
@@ -176,7 +187,8 @@ function createServer() {
               action: payload && payload.action,
               note: payload && payload.note,
               actor: payload && payload.actor,
-              reasons: payload && payload.reasons
+              reasons: payload && payload.reasons,
+              deferUntilUtc: payload && payload.defer_until_utc
             });
             sendJson(response, 200, result);
           })
@@ -187,7 +199,11 @@ function createServer() {
       }
 
       if (request.method === 'POST' && queueActionMatch) {
-        const itemId = decodeURIComponent(queueActionMatch[1]);
+        const itemId = decodeActionSegment(response, queueActionMatch[1]);
+
+        if (!itemId) {
+          return;
+        }
 
         readJsonBody(request)
           .then((payload) => {
@@ -196,7 +212,8 @@ function createServer() {
               action: payload && payload.action,
               note: payload && payload.note,
               actor: payload && payload.actor,
-              reasons: payload && payload.reasons
+              reasons: payload && payload.reasons,
+              deferUntilUtc: payload && payload.defer_until_utc
             });
             sendJson(response, 200, result);
           })
@@ -207,7 +224,11 @@ function createServer() {
       }
 
       if (request.method === 'POST' && threadActionMatch) {
-        const replyId = decodeURIComponent(threadActionMatch[1]);
+        const replyId = decodeActionSegment(response, threadActionMatch[1]);
+
+        if (!replyId) {
+          return;
+        }
 
         readJsonBody(request)
           .then((payload) => {
@@ -216,6 +237,30 @@ function createServer() {
               action: payload && payload.action,
               note: payload && payload.note,
               actor: payload && payload.actor
+            });
+            sendJson(response, 200, result);
+          })
+          .catch((error) => {
+            sendActionError(response, error);
+          });
+        return;
+      }
+
+      if (request.method === 'POST' && opsActionMatch) {
+        const actionId = decodeActionSegment(response, opsActionMatch[1]);
+
+        if (!actionId) {
+          return;
+        }
+
+        readJsonBody(request)
+          .then((payload) => {
+            const result = applyOpsAction({
+              actionId,
+              action: payload && payload.action,
+              actor: payload && payload.actor,
+              note: payload && payload.note,
+              deferUntilUtc: payload && payload.defer_until_utc
             });
             sendJson(response, 200, result);
           })

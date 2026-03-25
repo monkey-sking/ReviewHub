@@ -70,14 +70,16 @@ npm test
 ## What this workbench includes
 
 - Summary cards for pending approvals, queued items, platform count, and status count
-- Queue workbench with single-item actions: approve, reject, mark missing info, mark ready, restore auto inference
+- Queue workbench with single-item actions: approve, reject, mark missing info, mark ready, defer, restore auto inference
 - Batch actions for the current filtered queue result set
 - Automatic advance to the next visible queue item after a single-item action
 - Recent action log for the selected queue item in the inspector
 - Source-file preview in the inspector, including detected image/video/link artifacts for queue items
-- Recent activity stream that combines queue and thread actions in the Operations view
+- Daily processing lane in the Operations view that merges queue items, reply tasks, and follow-up review records
+- Recent activity stream that combines queue, thread, and operations-record actions in the Operations view
+- High-signal stream that surfaces recent manual actions plus feedback incidents with one-click jumps into the right work area
 - Thread inbox with local actions: mark ready, follow up, blocked, done, restore auto inference
-- Operations Review panels for review ledger, experiments, feedback snapshot, and browser handoffs
+- Operations Review panels for review ledger, experiments, feedback snapshot, and browser handoffs, each with local audited actions (`需复核 / 推进执行 / 暂缓 / 已处理 / 恢复系统判断`)
 - Latest Ops run panels for run health and execution snapshot, backed by supervisor, post, reply, fill, metrics, and feedback artifacts
 - Latest reply-thread detail view, including packet/job payloads and artifact links
 - Cross-links between queue items, browser handoffs, source files, and thread artifacts
@@ -93,6 +95,8 @@ npm test
 - `server.js` — local HTTP server and static/API routing
 - `lib/dashboard.js` — reads JSON, normalizes records, matches approvals to queue items, and builds the latest Ops run snapshot
 - `lib/operationsReview.js` — reads review ledger markdown plus latest Ops review artifacts
+- `lib/operationsRecords.js` — builds stable record identifiers for operations entries
+- `lib/operationsActions.js` — applies local audited mutations to operations follow-up state
 - `lib/queueActions.js` — applies audited queue mutations to queue and approval files
 - `lib/threadActions.js` — applies local audited mutations to reply-thread review state
 - `public/index.html` — single-page dashboard shell

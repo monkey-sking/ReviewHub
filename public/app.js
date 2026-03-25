@@ -1,4 +1,5 @@
 const ACTOR_STORAGE_KEY = 'reviewhub.actor';
+let flashBannerTimer = null;
 
 function readStoredActor() {
   try {
@@ -8,12 +9,21 @@ function readStoredActor() {
   }
 }
 
+const INBOX_TABS = [
+  { id: 'pending', label: '待审核' },
+  { id: 'ready', label: '可以继续' },
+  { id: 'missing_info', label: '资料不全' },
+  { id: 'deferred', label: '已暂缓' },
+  { id: 'all', label: '全部' }
+];
+
 const state = {
   data: null,
-  activeSection: 'overview',
+  activeSection: 'queue',
   filters: {
     project: 'all',
     status: 'all',
+    action_state: 'all',
     platform: 'all',
     risk: 'all',
     search: ''
@@ -22,14 +32,19 @@ const state = {
   selectedId: null,
   selectedThreadId: null,
   selectedOpsRecordId: null,
+  laneSelectionId: null,
   actionFeedback: null,
   threadActionFeedback: null,
-  batchActionFeedback: null,
+  opsActionFeedback: null,
+  flashMessage: null,
   actionPending: false,
   threadPending: false,
-  batchPending: false,
+  opsPending: false,
+  detailDeferMode: '',
+  processingLaneFilter: 'all',
   threadInboxFilter: 'needs_reply',
-  actor: readStoredActor()
+  actor: readStoredActor(),
+  inboxTab: 'pending'
 };
 
 const UI_LOCALE = 'zh-CN';
@@ -41,14 +56,20 @@ const DISPLAY_VALUE_MAP = {
   approval_pending: '等待审核',
   approval_registry: '审核记录表',
   blocked: '阻塞',
+  'bucket a': '分类 A',
+  'bucket b': '分类 B',
+  'bucket c': '分类 C',
   browser_post_queue_summary: '待自动发布数据',
+  critical: '紧急',
   daily_channel_queue: '待处理内容列表',
+  daily_processing: '日报待处理',
   degraded: '降级',
   error: '错误',
   experiment_log: '试验记录文件',
   experiments: '试验记录',
   failed: '失败',
   feedback: '问题反馈',
+  feedback_incident: '反馈告警',
   feedback_report: '反馈报告',
   fill: '自动填写',
   high: '高',
@@ -56,6 +77,7 @@ const DISPLAY_VALUE_MAP = {
   'handoff ready': '可交接',
   inline_text: '内联文本',
   low: '低',
+  manual: '需人工确认',
   manual_review: '需人工复核',
   'manual review': '需人工复核',
   marketing: '市场',
@@ -79,13 +101,16 @@ const DISPLAY_VALUE_MAP = {
   post_handoffs: '待自动发布',
   pending: '待处理',
   queued: '已准备好',
+  queue_action: '内容处理',
   reject: '驳回',
   ready: '就绪',
+  ready_for_browser_review: '待浏览器复核',
   ready_to_execute: '可以继续',
   'ready to execute': '可以继续',
   metrics: '指标',
   posts: '发帖',
   replies: '回复',
+  review_attention: '待关注记录',
   review_index: '审核记录文件',
   reviews: '审核记录',
   review: '需复核',
@@ -98,6 +123,7 @@ const DISPLAY_VALUE_MAP = {
   sensitive: '敏感',
   started: '已启动',
   supervisor: '自动流程',
+  thread_action: '回复处理',
   threads: '待人工回复',
   unavailable: '不可用',
   unknown: '未知',
@@ -116,12 +142,23 @@ const DISPLAY_VALUE_MAP = {
   red: '红色',
   follow_up: '待跟进',
   done: '已处理',
+  deferred: '已暂缓',
   yes: '是'
 };
 
+DISPLAY_VALUE_MAP.defer = '暂缓';
+DISPLAY_VALUE_MAP.execute = '推进执行';
+DISPLAY_VALUE_MAP.mark_defer = '标记暂缓';
+DISPLAY_VALUE_MAP.mark_deferred = '标记暂缓';
+DISPLAY_VALUE_MAP.mark_execute = '标记推进执行';
+DISPLAY_VALUE_MAP.mark_review = '标记需复核';
+DISPLAY_VALUE_MAP.ops_action = '问题记录处理';
+
 const MISSING_INFO_LABELS = {
   'approval match': '审核记录',
+  'approval rejected': '审批已驳回',
   'approval reason': '审核原因',
+  'approval revoked': '审批已撤回',
   'manual review': '人工补充',
   owner: '负责人'
 };
@@ -131,34 +168,23 @@ const elements = {
   actionLogMeta: document.getElementById('actionLogMeta'),
   actionLogPanel: document.getElementById('actionLogPanel'),
   approvalJson: document.getElementById('approvalJson'),
-  batchActionActor: document.getElementById('batchActionActor'),
-  batchActionBar: document.getElementById('batchActionBar'),
-  batchActionNote: document.getElementById('batchActionNote'),
-  batchActionPanel: document.getElementById('batchActionPanel'),
-  batchActionStatus: document.getElementById('batchActionStatus'),
-  batchActionSummary: document.getElementById('batchActionSummary'),
-  bossThreadsMeta: document.getElementById('bossThreadsMeta'),
-  bossThreadsSummary: document.getElementById('bossThreadsSummary'),
   detailActionBar: document.getElementById('detailActionBar'),
   detailActionActor: document.getElementById('detailActionActor'),
   detailActionNote: document.getElementById('detailActionNote'),
+  detailActionDeferUntil: document.getElementById('detailActionDeferUntil'),
   detailActionPanel: document.getElementById('detailActionPanel'),
   detailActionStatus: document.getElementById('detailActionStatus'),
   detailContextBar: document.getElementById('detailContextBar'),
   detailContextPanel: document.getElementById('detailContextPanel'),
   detailEmpty: document.getElementById('detailEmpty'),
-  detailGrid: document.getElementById('detailGrid'),
+  detailInsightCore: document.getElementById('detailInsightCore'),
+  detailInsightDiagnosis: document.getElementById('detailInsightDiagnosis'),
+  detailInsightMetadata: document.getElementById('detailInsightMetadata'),
   detailSubtitle: document.getElementById('detailSubtitle'),
   detailTitle: document.getElementById('detailTitle'),
   detailView: document.getElementById('detailView'),
-  executionSnapshotMeta: document.getElementById('executionSnapshotMeta'),
-  executionSnapshotSummary: document.getElementById('executionSnapshotSummary'),
-  experimentList: document.getElementById('experimentList'),
-  experimentMeta: document.getElementById('experimentMeta'),
-  feedbackMeta: document.getElementById('feedbackMeta'),
-  feedbackSummary: document.getElementById('feedbackSummary'),
-  handoffList: document.getElementById('handoffList'),
-  handoffMeta: document.getElementById('handoffMeta'),
+  deferredCount: document.getElementById('deferredCount'),
+  deferredList: document.getElementById('deferredList'),
   itemList: document.getElementById('itemList'),
   listMeta: document.getElementById('listMeta'),
   needsInfoCount: document.getElementById('needsInfoCount'),
@@ -167,30 +193,120 @@ const elements = {
   needsReviewList: document.getElementById('needsReviewList'),
   queueJson: document.getElementById('queueJson'),
   readyToExecuteCount: document.getElementById('readyToExecuteCount'),
+  readyToExecuteList: document.getElementById('readyToExecuteList'),
   recentActivityList: document.getElementById('recentActivityList'),
   recentActivityMeta: document.getElementById('recentActivityMeta'),
-  readyToExecuteList: document.getElementById('readyToExecuteList'),
   refreshButton: document.getElementById('refreshButton'),
   resultCount: document.getElementById('resultCount'),
   primaryJsonTitle: document.getElementById('primaryJsonTitle'),
   projectFilter: document.getElementById('projectFilter'),
   riskFilter: document.getElementById('riskFilter'),
-  reviewLedgerList: document.getElementById('reviewLedgerList'),
-  reviewLedgerMeta: document.getElementById('reviewLedgerMeta'),
-  runHealthMeta: document.getElementById('runHealthMeta'),
-  runHealthSummary: document.getElementById('runHealthSummary'),
+  operationsUnifiedList: document.getElementById('operationsUnifiedList'),
+  operationsUnifiedMeta: document.getElementById('operationsUnifiedMeta'),
+  pipelineUnifiedList: document.getElementById('pipelineUnifiedList'),
+  pipelineUnifiedMeta: document.getElementById('pipelineUnifiedMeta'),
   searchInput: document.getElementById('searchInput'),
   secondaryJsonTitle: document.getElementById('secondaryJsonTitle'),
   sourceArtifactList: document.getElementById('sourceArtifactList'),
   sourcePreview: document.getElementById('sourcePreview'),
   sourcePreviewPanel: document.getElementById('sourcePreviewPanel'),
   statusBanner: document.getElementById('statusBanner'),
+  flashBanner: document.getElementById('flashBanner'),
   statusFilter: document.getElementById('statusFilter'),
+  actionStateFilter: document.getElementById('actionStateFilter'),
   summaryCards: document.getElementById('summaryCards'),
   threadInboxFilter: document.getElementById('threadInboxFilter'),
   platformFilter: document.getElementById('platformFilter'),
-  workspaceHighlights: document.getElementById('workspaceHighlights')
+  workspaceHighlights: document.getElementById('workspaceHighlights'),
+  filterResetButton: document.getElementById('filterResetButton')
 };
+
+function matchesInboxTab(item) {
+  if (!item) {
+    return false;
+  }
+
+  const inboxTab = state.inboxTab || 'pending';
+  const actionState = cleanClientValue(item.action_state);
+  const status = cleanClientValue(item.status);
+
+  switch (inboxTab) {
+    case 'pending':
+      return status === 'approval_pending';
+    case 'ready':
+      return actionState === 'ready_to_execute' || status === 'queued';
+    case 'missing_info':
+      return actionState === 'missing_info';
+    case 'deferred':
+      return actionState === 'deferred';
+    case 'all':
+    default:
+      return true;
+  }
+}
+
+function renderInboxTabs() {
+  return INBOX_TABS
+    .map((tab) => {
+      const isActive = state.inboxTab === tab.id;
+      const className = isActive ? 'inbox-view-tab is-active' : 'inbox-view-tab';
+      return `<button class="${className}" type="button" data-inbox-tab="${escapeHtml(tab.id)}">${escapeHtml(tab.label)}</button>`;
+    })
+    .join('');
+}
+
+function getInboxTabCount(tabId) {
+  const summary = state.data && state.data.summary ? state.data.summary : {};
+
+  switch (tabId) {
+    case 'pending':
+      return summary.approval_pending_items || 0;
+    case 'ready':
+      return summary.ready_to_execute_count || 0;
+    case 'missing_info':
+      return summary.missing_info_count || 0;
+    case 'deferred':
+      return summary.deferred_count || 0;
+    case 'all':
+    default:
+      return summary.total_items || 0;
+  }
+}
+
+function renderInboxTabBar() {
+  document.querySelectorAll('[data-inbox-tab]').forEach((button) => {
+    const tabId = button.dataset.inboxTab;
+    const config = INBOX_TABS.find((tab) => tab.id === tabId);
+
+    if (!config) {
+      return;
+    }
+
+    const isActive = state.inboxTab === tabId;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+    button.textContent = `${config.label}（${getInboxTabCount(tabId)}）`;
+  });
+}
+
+function attachInboxTabListeners() {
+  document.querySelectorAll('[data-inbox-tab]').forEach((button) => {
+    if (button.dataset.boundTab === 'true') {
+      return;
+    }
+
+    button.dataset.boundTab = 'true';
+    button.addEventListener('click', () => {
+      const tabId = button.dataset.inboxTab;
+      if (tabId && tabId !== state.inboxTab) {
+        state.inboxTab = tabId;
+        clearActionFeedback();
+        renderInboxTabBar();
+        renderList();
+      }
+    });
+  });
+}
 
 function formatDate(value) {
   if (!value) {
@@ -302,6 +418,7 @@ function renderSourcePreview(sourceDetails) {
 }
 
 function renderRecentActivity() {
+  if (!elements.recentActivityList) return; // DOM removed in unified layout
   if (!state.data || !state.data.recent_activity) {
     elements.recentActivityMeta.textContent = '';
     elements.recentActivityList.innerHTML = '<div class="empty-state">暂时没有最近动作。</div>';
@@ -314,10 +431,16 @@ function renderRecentActivity() {
   elements.recentActivityList.innerHTML = entries.length === 0
     ? '<div class="empty-state">暂时没有最近动作。</div>'
     : entries.map((entry) => {
-      const targetLabel = entry.kind === 'thread' ? (entry.target_id || '未知回复') : (entry.target_id || '未知内容');
+      const targetLabel = entry.kind === 'thread'
+        ? (entry.target_id || '未知回复')
+        : entry.kind === 'ops'
+          ? (entry.record_title || entry.target_id || '未知记录')
+          : (entry.target_id || '未知内容');
       const targetButton = entry.kind === 'thread'
         ? `<button class="button button-link" type="button" data-jump-thread-id="${escapeHtml(entry.target_id || '')}">查看回复</button>`
-        : `<button class="button button-link" type="button" data-jump-item-id="${escapeHtml(entry.target_id || '')}">查看内容</button>`;
+        : entry.kind === 'ops'
+          ? `<button class="button button-link" type="button" data-jump-ops-id="${escapeHtml(entry.target_id || '')}">查看记录</button>`
+          : `<button class="button button-link" type="button" data-jump-item-id="${escapeHtml(entry.target_id || '')}">查看内容</button>`;
       const noteParts = [entry.note];
       if (entry.kind === 'queue' && entry.reasons && entry.reasons.length > 0) {
         noteParts.push(`原因：${translateMissingInfoList(entry.reasons).join('，')}`);
@@ -325,12 +448,15 @@ function renderRecentActivity() {
       if (entry.kind === 'thread' && entry.manual_state) {
         noteParts.push(`状态：${getThreadStateLabel(entry.manual_state)}`);
       }
+      if (entry.kind === 'ops' && entry.manual_state) {
+        noteParts.push(`状态：${getOpsStateLabel(entry.manual_state)}`);
+      }
       return `
         <article class="ops-item">
           <div class="ops-item-top">
             <strong>${escapeHtml(translateDisplayValue(entry.action || 'unknown'))}</strong>
             <div class="tag-group">
-              <span class="tag tag-muted">${escapeHtml(entry.kind === 'thread' ? '回复' : '队列')}</span>
+              <span class="tag tag-muted">${escapeHtml(entry.kind === 'thread' ? '回复' : entry.kind === 'ops' ? '问题记录' : '队列')}</span>
               <span class="tag tag-muted">${escapeHtml(entry.actor || '—')}</span>
             </div>
           </div>
@@ -354,6 +480,244 @@ function renderRecentActivity() {
       setActiveSection('pipeline', { syncContext: false });
     });
   });
+
+  document.querySelectorAll('[data-jump-ops-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      navigateToOpsRecord(button.dataset.jumpOpsId);
+    });
+  });
+}
+
+function getProcessingLaneEntries() {
+  return state.data && state.data.daily_processing_queue && Array.isArray(state.data.daily_processing_queue.entries)
+    ? state.data.daily_processing_queue.entries
+    : [];
+}
+
+function getFilteredProcessingLaneEntries() {
+  const entries = getProcessingLaneEntries();
+
+  if (state.processingLaneFilter === 'all') {
+    return entries;
+  }
+
+  return entries.filter((entry) => entry.source_kind === state.processingLaneFilter);
+}
+
+function getProcessingLaneTypeLabel(sourceKind) {
+  const labels = {
+    queue: '待处理内容',
+    thread: '待人工回复',
+    review: '问题记录'
+  };
+
+  return labels[sourceKind] || translateDisplayValue(sourceKind);
+}
+
+function formatProcessingLaneMeta(entry) {
+  const parts = [];
+
+  if (entry.source_kind === 'queue') {
+    parts.push(cleanClientValue(entry.platform));
+    parts.push(cleanClientValue(entry.project));
+    if (cleanClientValue(entry.lane_status)) {
+      parts.push(`当前状态：${translateDisplayValue(entry.lane_status)}`);
+    }
+    if (cleanClientValue(entry.handoff_status)) {
+      parts.push(`发布准备：${translateDisplayValue(entry.handoff_status)}`);
+    }
+  } else if (entry.source_kind === 'thread') {
+    parts.push(cleanClientValue(entry.platform));
+    parts.push('待人工回复');
+    if (cleanClientValue(entry.lane_status)) {
+      parts.push(`处理状态：${translateDisplayValue(entry.lane_status)}`);
+    }
+  } else if (entry.source_kind === 'review') {
+    parts.push('问题记录');
+    if (cleanClientValue(entry.summary)) {
+      parts.push(entry.summary);
+    }
+    if (cleanClientValue(entry.lane_status)) {
+      parts.push(`跟进状态：${translateDisplayValue(entry.lane_status)}`);
+    }
+  }
+
+  if (entry.timestamp_utc) {
+    parts.push(formatDate(entry.timestamp_utc));
+  }
+
+  return parts.filter(Boolean).join(' · ') || '点击查看详情。';
+}
+
+function formatProcessingLaneNote(entry) {
+  if (entry.source_kind === 'queue') {
+    return entry.note || entry.preview || '打开后可直接处理这条内容。';
+  }
+
+  if (entry.source_kind === 'thread') {
+    return entry.note || entry.preview || '打开后可查看回复上下文并继续处理。';
+  }
+
+  if (entry.source_kind === 'review') {
+    return entry.note || entry.preview || '打开后可继续跟进这条问题记录。';
+  }
+
+  return entry.note || entry.preview || '点击进入对应工作区。';
+}
+
+function formatThreadFlags(record) {
+  const flags = [];
+
+  if (record.manual_required) {
+    flags.push('需人工判断');
+  }
+
+  if (record.has_sensitive_content) {
+    flags.push('含敏感内容');
+  }
+
+  if (record.handoff_ready) {
+    flags.push('已准备交接');
+  }
+
+  if (record.blocked_reasons && record.blocked_reasons.length > 0) {
+    flags.push('当前阻塞');
+  }
+
+  return flags;
+}
+
+function getProcessingPriorityClass(priority) {
+  if (priority === 'high') {
+    return 'tag-status';
+  }
+
+  if (priority === 'medium') {
+    return 'tag-risk';
+  }
+
+  return 'tag-muted';
+}
+
+function getSignalSeverityClass(severity) {
+  if (severity === 'critical') {
+    return 'tag-status';
+  }
+
+  if (severity === 'warning') {
+    return 'tag-risk';
+  }
+
+  return 'tag-muted';
+}
+
+function attachNavigationButtons(selector) {
+  document.querySelectorAll(selector).forEach((button) => {
+    if (button.dataset.selectionBound === 'true') {
+      return;
+    }
+
+    button.dataset.selectionBound = 'true';
+    button.addEventListener('click', () => {
+      navigateByTarget(button.dataset.navKind, button.dataset.navId);
+    });
+  });
+}
+
+function renderProcessingLane() {
+  if (!elements.processingLaneList) return; // DOM removed in unified layout
+  if (!state.data || !state.data.daily_processing_queue) {
+    elements.processingLaneMeta.textContent = '';
+    elements.processingLaneList.innerHTML = '<div class="empty-state">暂时没有日报待处理。</div>';
+    elements.processingLaneFilter.disabled = true;
+    return;
+  }
+
+  const lane = state.data.daily_processing_queue;
+  const filteredEntries = getFilteredProcessingLaneEntries();
+  elements.processingLaneFilter.disabled = lane.total_entries === 0;
+  elements.processingLaneFilter.value = state.processingLaneFilter;
+  elements.processingLaneMeta.textContent = `${filteredEntries.length} / ${lane.total_entries} 条`;
+  elements.processingLaneList.innerHTML = filteredEntries.length === 0
+    ? '<div class="empty-state">当前范围下没有待处理项。</div>'
+    : filteredEntries.map((entry) => {
+      const selectedClass = state.laneSelectionId === entry.id ? ' ops-item-selected' : '';
+
+      return `
+        <button
+          class="ops-item ops-item-button${selectedClass}"
+          data-processing-entry="${escapeHtml(entry.id)}"
+          data-nav-kind="${escapeHtml(entry.navigation && entry.navigation.kind)}"
+          data-nav-id="${escapeHtml(entry.navigation && entry.navigation.target_id)}"
+          type="button"
+        >
+          <div class="ops-item-top">
+            <strong>${escapeHtml(entry.title || '未知项目')}</strong>
+            <div class="tag-group">
+              <span class="tag ${getProcessingPriorityClass(entry.priority)}">${escapeHtml(translateDisplayValue(entry.priority || 'low'))}</span>
+              <span class="tag tag-muted">${escapeHtml(getProcessingLaneTypeLabel(entry.source_kind))}</span>
+            </div>
+          </div>
+          <span class="ops-item-meta">${escapeHtml(formatProcessingLaneMeta(entry))}</span>
+          <span class="ops-item-note">${escapeHtml(formatProcessingLaneNote(entry))}</span>
+        </button>
+      `;
+    }).join('');
+
+  document.querySelectorAll('[data-processing-entry]').forEach((button) => {
+    button.addEventListener('click', () => {
+      handleProcessingLaneEntry(button.dataset.navKind, button.dataset.navId, button.dataset.processingEntry);
+    });
+  });
+}
+
+function renderSignalStream() {
+  if (!elements.signalStreamList) return; // DOM removed in unified layout
+  if (!state.data || !state.data.signal_stream) {
+    elements.signalStreamMeta.textContent = '';
+    elements.signalStreamList.innerHTML = '<div class="empty-state">暂时没有重要变化。</div>';
+    return;
+  }
+
+  const signalStream = state.data.signal_stream;
+  const entries = Array.isArray(signalStream.entries) ? signalStream.entries : [];
+  elements.signalStreamMeta.textContent = `${entries.length} / ${signalStream.total_entries} 条`;
+  elements.signalStreamList.innerHTML = entries.length === 0
+    ? '<div class="empty-state">暂时没有重要变化。</div>'
+    : entries.map((entry) => {
+      const hasTarget = entry.navigation && entry.navigation.kind && entry.navigation.target_id;
+      const openTag = hasTarget
+        ? `<button class="ops-item ops-item-button" data-nav-kind="${escapeHtml(entry.navigation.kind)}" data-nav-id="${escapeHtml(entry.navigation.target_id)}" type="button">`
+        : '<article class="ops-item">';
+      const closeTag = hasTarget ? '</button>' : '</article>';
+
+      return `
+        ${openTag}
+          <div class="ops-item-top">
+            <strong>${escapeHtml(translateDisplayValue(entry.title || entry.signal_kind || 'unknown'))}</strong>
+            <div class="tag-group">
+              <span class="tag ${getSignalSeverityClass(entry.severity)}">${escapeHtml(translateDisplayValue(entry.severity || 'info'))}</span>
+              <span class="tag tag-muted">${escapeHtml(translateDisplayValue(entry.signal_kind || 'unknown'))}</span>
+            </div>
+          </div>
+          <span class="ops-item-meta">${escapeHtml([
+            entry.timestamp_utc ? formatDate(entry.timestamp_utc) : '',
+            entry.summary || ''
+          ].filter(Boolean).join(' · ') || '—')}</span>
+          <span class="ops-item-note">${escapeHtml(
+            entry.signal_kind === 'ops_action'
+              ? [
+                entry.manual_state ? `状态：${getOpsStateLabel(entry.manual_state)}` : '',
+                entry.defer_until_utc ? `暂缓到：${formatDate(entry.defer_until_utc)}` : '',
+                entry.note || ''
+              ].filter(Boolean).join(' · ') || '点击查看详情。'
+              : entry.note || '点击查看详情。'
+          )}</span>
+        ${closeTag}
+      `;
+    }).join('');
+
+  attachNavigationButtons('[data-nav-kind]');
 }
 
 function createOptions(selectElement, values, currentValue) {
@@ -370,6 +734,7 @@ function createOptions(selectElement, values, currentValue) {
 function setFilterAvailability(disabled) {
   elements.projectFilter.disabled = disabled;
   elements.statusFilter.disabled = disabled;
+  elements.actionStateFilter.disabled = disabled;
   elements.platformFilter.disabled = disabled;
   elements.riskFilter.disabled = disabled;
   elements.searchInput.disabled = disabled;
@@ -573,15 +938,31 @@ function findQueueItemByReference(reference = {}) {
 function createOperationsRecord(config) {
   return {
     id: config.id,
+    actionId: config.actionId || '',
     kind: config.kind,
     title: config.title,
     subtitle: config.subtitle,
     rows: config.rows || [],
+    reviewState: config.reviewState || '',
+    reviewOverride: Boolean(config.reviewOverride),
+    reviewLastAction: config.reviewLastAction || '',
+    reviewNote: config.reviewNote || '',
+    reviewDeferUntil: config.reviewDeferUntil || '',
+    reviewUpdatedAt: config.reviewUpdatedAt || '',
+    reviewUpdatedBy: config.reviewUpdatedBy || '',
     primaryTitle: config.primaryTitle || '原始问题数据',
     secondaryTitle: config.secondaryTitle || '来源信息',
     primaryPayload: config.primaryPayload || null,
     secondaryPayload: config.secondaryPayload || null
   };
+}
+
+function getOperationsCatalogMap() {
+  const catalog = state.data && Array.isArray(state.data.operations_record_catalog)
+    ? state.data.operations_record_catalog
+    : [];
+
+  return new Map(catalog.map((record) => [record.ui_id, record]));
 }
 
 function getOperationsRecords() {
@@ -590,14 +971,24 @@ function getOperationsRecords() {
   }
 
   const operationsReview = state.data.operations_review;
+  const catalogByUiId = getOperationsCatalogMap();
   const records = [];
 
   (operationsReview.reviews.entries || []).forEach((entry, index) => {
+    const catalogRecord = catalogByUiId.get(`review:${index}`) || {};
     records.push(createOperationsRecord({
       id: `review:${index}`,
+      actionId: catalogRecord.action_id || '',
       kind: 'review',
       title: translateDisplayValue(entry.job || 'Unnamed review'),
       subtitle: [entry.date_yyyy_mm_dd_ || entry.date_yyyy_mm_dd || entry.date || '暂无日期', entry.focus || '暂无重点'].join(' · '),
+      reviewState: catalogRecord.review_state || '',
+      reviewOverride: catalogRecord.review_override,
+      reviewLastAction: catalogRecord.review_last_action || '',
+      reviewNote: catalogRecord.review_note || '',
+      reviewDeferUntil: catalogRecord.review_defer_until || '',
+      reviewUpdatedAt: catalogRecord.review_updated_at || '',
+      reviewUpdatedBy: catalogRecord.review_updated_by || '',
       rows: [
         ['类别', '审核记录'],
         ['状态', translateDisplayValue(entry.status || 'unknown')],
@@ -618,11 +1009,20 @@ function getOperationsRecords() {
   });
 
   (operationsReview.experiments.entries || []).forEach((entry, index) => {
+    const catalogRecord = catalogByUiId.get(`experiment:${index}`) || {};
     records.push(createOperationsRecord({
       id: `experiment:${index}`,
+      actionId: catalogRecord.action_id || '',
       kind: 'experiment',
       title: translateDisplayValue(entry.experiment || 'Unnamed experiment'),
       subtitle: [entry.started || '暂无开始日期', translateDisplayValue(entry.job || 'unknown job')].join(' · '),
+      reviewState: catalogRecord.review_state || '',
+      reviewOverride: catalogRecord.review_override,
+      reviewLastAction: catalogRecord.review_last_action || '',
+      reviewNote: catalogRecord.review_note || '',
+      reviewDeferUntil: catalogRecord.review_defer_until || '',
+      reviewUpdatedAt: catalogRecord.review_updated_at || '',
+      reviewUpdatedBy: catalogRecord.review_updated_by || '',
       rows: [
         ['类别', '试验记录'],
         ['状态', translateDisplayValue(entry.status || 'unknown')],
@@ -643,11 +1043,20 @@ function getOperationsRecords() {
   });
 
   if (operationsReview.feedback.path || (operationsReview.feedback.issues || []).length > 0) {
+    const catalogRecord = catalogByUiId.get('feedback:summary') || {};
     records.push(createOperationsRecord({
       id: 'feedback:summary',
+      actionId: catalogRecord.action_id || '',
       kind: 'feedback',
       title: `反馈报告 ${operationsReview.feedback.run_date || '最新一期'}`,
       subtitle: `${operationsReview.feedback.summary.total_incidents} 起事件 · ${operationsReview.feedback.summary.user_feedback_signals} 个用户信号`,
+      reviewState: catalogRecord.review_state || '',
+      reviewOverride: catalogRecord.review_override,
+      reviewLastAction: catalogRecord.review_last_action || '',
+      reviewNote: catalogRecord.review_note || '',
+      reviewDeferUntil: catalogRecord.review_defer_until || '',
+      reviewUpdatedAt: catalogRecord.review_updated_at || '',
+      reviewUpdatedBy: catalogRecord.review_updated_by || '',
       rows: [
         ['类别', '问题反馈'],
         ['运行日期', operationsReview.feedback.run_date || '—'],
@@ -668,11 +1077,20 @@ function getOperationsRecords() {
   }
 
   (operationsReview.feedback.root_causes || []).forEach((cause, index) => {
+    const catalogRecord = catalogByUiId.get(`feedback-cause:${index}`) || {};
     records.push(createOperationsRecord({
       id: `feedback-cause:${index}`,
+      actionId: catalogRecord.action_id || '',
       kind: 'feedback_cause',
       title: cause.label || `根因 ${index + 1}`,
       subtitle: `${cause.incidents} 起事件 · ${cause.share}`,
+      reviewState: catalogRecord.review_state || '',
+      reviewOverride: catalogRecord.review_override,
+      reviewLastAction: catalogRecord.review_last_action || '',
+      reviewNote: catalogRecord.review_note || '',
+      reviewDeferUntil: catalogRecord.review_defer_until || '',
+      reviewUpdatedAt: catalogRecord.review_updated_at || '',
+      reviewUpdatedBy: catalogRecord.review_updated_by || '',
       rows: [
         ['类别', '反馈根因'],
         ['根因', cause.label || '—'],
@@ -691,11 +1109,20 @@ function getOperationsRecords() {
   });
 
   (operationsReview.post_handoffs.records || []).forEach((record, index) => {
+    const catalogRecord = catalogByUiId.get(`handoff:${index}`) || {};
     records.push(createOperationsRecord({
       id: `handoff:${index}`,
+      actionId: catalogRecord.action_id || '',
       kind: 'handoff',
       title: record.item_id || `交接记录 ${index + 1}`,
       subtitle: [record.platform || '未知平台', translateDisplayValue(record.status || record.queue_status || 'unknown')].join(' · '),
+      reviewState: catalogRecord.review_state || '',
+      reviewOverride: catalogRecord.review_override,
+      reviewLastAction: catalogRecord.review_last_action || '',
+      reviewNote: catalogRecord.review_note || '',
+      reviewDeferUntil: catalogRecord.review_defer_until || '',
+      reviewUpdatedAt: catalogRecord.review_updated_at || '',
+      reviewUpdatedBy: catalogRecord.review_updated_by || '',
       rows: [
         ['类别', '待自动发布'],
         ['平台', record.platform || '—'],
@@ -782,6 +1209,29 @@ function getThreadActionLabel(action) {
   return labels[action] || translateDisplayValue(action);
 }
 
+function getOpsStateLabel(stateKey) {
+  const labels = {
+    review: '需复核',
+    execute: '推进执行',
+    defer: '已暂缓',
+    done: '已处理'
+  };
+
+  return labels[stateKey] || translateDisplayValue(stateKey);
+}
+
+function getOpsActionLabel(action) {
+  const labels = {
+    mark_review: '标记需复核',
+    mark_execute: '标记推进执行',
+    mark_defer: '标记暂缓',
+    mark_done: '标记已处理',
+    restore_auto: '恢复系统判断'
+  };
+
+  return labels[action] || translateDisplayValue(action);
+}
+
 function getThreadStateTagClass(stateKey) {
   if (stateKey === 'ready' || stateKey === 'done') {
     return 'tag-project';
@@ -792,6 +1242,22 @@ function getThreadStateTagClass(stateKey) {
   }
 
   return 'tag-risk';
+}
+
+function getOpsStateTagClass(stateKey) {
+  if (stateKey === 'done') {
+    return 'tag-project';
+  }
+
+  if (stateKey === 'defer') {
+    return 'tag-risk';
+  }
+
+  if (stateKey === 'execute') {
+    return 'tag-project';
+  }
+
+  return 'tag-status';
 }
 
 function getFilteredThreadRecords() {
@@ -833,7 +1299,48 @@ function getNextThreadSelection(processedReplyIds, currentReplyId = state.select
 function clearActionFeedback() {
   state.actionFeedback = null;
   state.threadActionFeedback = null;
-  state.batchActionFeedback = null;
+  state.opsActionFeedback = null;
+}
+
+function setFlashMessage(message, tone = 'success') {
+  if (flashBannerTimer) {
+    window.clearTimeout(flashBannerTimer);
+    flashBannerTimer = null;
+  }
+
+  state.flashMessage = { message, tone };
+  renderFlashBanner();
+
+  flashBannerTimer = window.setTimeout(() => {
+    clearFlashBanner();
+  }, 5000);
+}
+
+function renderFlashBanner() {
+  if (!elements.flashBanner) {
+    return;
+  }
+
+  if (!state.flashMessage) {
+    elements.flashBanner.hidden = true;
+    elements.flashBanner.textContent = '';
+    elements.flashBanner.className = 'flash-banner';
+    return;
+  }
+
+  elements.flashBanner.textContent = state.flashMessage.message;
+  elements.flashBanner.hidden = false;
+  elements.flashBanner.className = `flash-banner is-${state.flashMessage.tone}`;
+}
+
+function clearFlashBanner() {
+  if (flashBannerTimer) {
+    window.clearTimeout(flashBannerTimer);
+    flashBannerTimer = null;
+  }
+
+  state.flashMessage = null;
+  renderFlashBanner();
 }
 
 function persistActor() {
@@ -844,9 +1351,120 @@ function persistActor() {
   }
 }
 
+function handleProcessingLaneEntry(kind, targetId, laneId) {
+  if (!kind || !targetId) {
+    return;
+  }
+
+  state.laneSelectionId = laneId;
+  clearActionFeedback();
+  state.activeSection = 'operations';
+
+  if (kind === 'queue') {
+    state.detailMode = 'queue';
+    state.selectedId = targetId;
+    state.selectedThreadId = null;
+    state.selectedOpsRecordId = null;
+  } else if (kind === 'thread') {
+    state.detailMode = 'thread';
+    state.selectedThreadId = targetId;
+    state.selectedId = null;
+    state.selectedOpsRecordId = null;
+  } else if (kind === 'ops') {
+    state.detailMode = 'ops';
+    state.selectedOpsRecordId = targetId;
+    state.selectedId = null;
+    state.selectedThreadId = null;
+  } else {
+    return;
+  }
+
+  renderWorkspaceSections();
+  renderDetailForCurrentMode('当前筛选条件下没有匹配项目。');
+}
+
 function syncActorInputs() {
   elements.detailActionActor.value = state.actor;
-  elements.batchActionActor.value = state.actor;
+}
+
+function setInputLabelVisibility(inputElement, visible) {
+  const label = inputElement && inputElement.closest('label');
+
+  if (!label) {
+    return;
+  }
+
+  label.hidden = !visible;
+}
+
+function toDatetimeLocalValue(value) {
+  const raw = cleanClientValue(value);
+
+  if (!raw) {
+    return '';
+  }
+
+  const parsed = new Date(raw);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+
+  const offsetDate = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000);
+  return offsetDate.toISOString().slice(0, 16);
+}
+
+function readDeferUntilInput(inputElement) {
+  if (!inputElement) {
+    return '';
+  }
+
+  const raw = inputElement.value ? inputElement.value.trim() : '';
+
+  if (!raw) {
+    return '';
+  }
+
+  const parsed = new Date(raw);
+
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error('暂缓时间格式无效。');
+  }
+
+  return parsed.toISOString();
+}
+
+function syncDeferInputs() {
+  const showDetailDefer = state.detailDeferMode === 'queue' || state.detailDeferMode === 'ops';
+  setInputLabelVisibility(elements.detailActionDeferUntil, showDetailDefer);
+  if (!showDetailDefer) {
+    elements.detailActionDeferUntil.value = '';
+  }
+}
+
+function requireDeferUntil(scope, feedbackSetter, renderFn, inputElement, modeKey, message) {
+  const value = inputElement && inputElement.value ? inputElement.value.trim() : '';
+
+  if (value) {
+    return true;
+  }
+
+  if (scope === 'detail') {
+    state.detailDeferMode = modeKey;
+  }
+
+  if (scope === 'batch') {
+    // batch removed
+  }
+
+  feedbackSetter({
+    tone: 'error',
+    message
+  });
+  syncDeferInputs();
+  renderFn();
+  inputElement.focus();
+  return false;
 }
 
 function setActorValue(value) {
@@ -864,15 +1482,25 @@ function renderWorkspaceSections() {
     panel.hidden = panel.dataset.sectionPanel !== state.activeSection;
   });
 
-  document.querySelectorAll('[data-section-tab]').forEach((button) => {
-    const isActive = button.dataset.sectionTab === state.activeSection;
-    button.classList.toggle('is-active', isActive);
-    button.setAttribute('aria-selected', String(isActive));
+  // Since workspace highlights is dynamically generated, we update active states on next tick
+  requestAnimationFrame(() => {
+    document.querySelectorAll('[data-section-jump]').forEach((button) => {
+      const isActive = button.dataset.sectionJump === state.activeSection;
+      button.classList.toggle('is-active', isActive);
+      button.setAttribute('aria-selected', String(isActive));
+    });
   });
 }
 
 function syncSectionContext(section) {
   if (!state.data) {
+    return;
+  }
+
+  if (section === 'overview') {
+    state.selectedThreadId = null;
+    state.selectedOpsRecordId = null;
+    clearActionFeedback();
     return;
   }
 
@@ -927,48 +1555,47 @@ function renderWorkspaceHighlights() {
   const summary = state.data.summary || {};
   const operationsReview = state.data.operations_review || {};
   const opsSnapshot = state.data.ops_snapshot || {};
+  const processingLane = state.data.daily_processing_queue || {};
   const threads = opsSnapshot.modules && opsSnapshot.modules.threads ? opsSnapshot.modules.threads : null;
 
   const cards = [
     {
-      section: 'overview',
-      title: '今日概况',
-      value: `${summary.pending_approvals || 0} 等待审核 / ${summary.queued_items || 0} 已准备好`,
-      note: '先看今天有多少内容待处理，再决定先处理哪一类。'
-    },
-    {
       section: 'queue',
-      title: '待处理内容',
-      value: `${summary.total_items || 0} 个项目`,
-      note: '在这里逐条查看内容并直接做处理决定。'
+      title: '主操作台',
+      value: `${summary.approval_pending_items || 0} 待审 · ${summary.ready_to_execute_count || 0} 可继续`
     },
     {
       section: 'operations',
-      title: '问题记录',
+      title: '异常拦截',
       value: operationsReview.available === false
-        ? '数据不可用'
-        : `${operationsReview.summary ? operationsReview.summary.attention_count : 0} 个待关注`,
-      note: '这里看最近的审核记录、试验、反馈和待自动发布内容。'
+        ? '不可用'
+        : `${processingLane.high_priority_count || 0} 条拦阻`
     },
     {
       section: 'pipeline',
-      title: '自动执行',
-      value: `${threads ? threads.needs_reply_count : 0} 条待人工判断`,
-      note: '这里查看自动流程状态，以及哪些回复需要人工接手。'
+      title: '机器接管',
+      value: `${threads ? threads.needs_reply_count : 0} 待人工流转`
+    },
+    {
+      section: 'overview',
+      title: '数据大屏',
+      value: `${summary.total_items || 0} 全局水位`
     }
   ];
 
-  elements.workspaceHighlights.innerHTML = cards
+  const highlightMarkup = cards
     .map((card) => {
+      const isActive = card.section === state.activeSection ? 'is-active' : '';
       return `
-        <button class="workspace-highlight" data-section-jump="${escapeHtml(card.section)}" type="button">
-          <p>${escapeHtml(card.title)}</p>
-          <strong>${escapeHtml(card.value)}</strong>
-          <span>${escapeHtml(card.note)}</span>
+        <button class="workspace-highlight ${isActive}" data-section-jump="${escapeHtml(card.section)}" type="button">
+          <span class="wh-title">${escapeHtml(card.title)}</span>
+          <strong class="wh-value">${escapeHtml(card.value)}</strong>
         </button>
       `;
     })
     .join('');
+
+  elements.workspaceHighlights.innerHTML = highlightMarkup;
 
   document.querySelectorAll('[data-section-jump]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -988,38 +1615,31 @@ function attachWorkspaceNavigation() {
 function renderOperationsReview() {
   const operationsReview = state.data.operations_review;
   const selectedOpsRecord = getSelectedOperationsRecord();
+  const operationsRecords = getOperationsRecords();
+  const operationsRecordById = new Map(operationsRecords.map((record) => [record.id, record]));
   const reviews = operationsReview.reviews.entries || [];
   const experiments = operationsReview.experiments.entries || [];
   const feedback = operationsReview.feedback;
   const postHandoffs = operationsReview.post_handoffs;
 
   if (operationsReview.available === false) {
-    const unavailableMarkup = createOpsIssueMarkup(
-      operationsReview.issues,
-      '问题记录数据暂时不可用。'
-    );
-
-    elements.reviewLedgerMeta.textContent = '不可用';
-    elements.experimentMeta.textContent = '不可用';
-    elements.feedbackMeta.textContent = '不可用';
-    elements.handoffMeta.textContent = '不可用';
-    elements.reviewLedgerList.innerHTML = unavailableMarkup;
-    elements.experimentList.innerHTML = unavailableMarkup;
-    elements.feedbackSummary.innerHTML = unavailableMarkup;
-    elements.handoffList.innerHTML = unavailableMarkup;
+    elements.operationsUnifiedMeta.textContent = '不可用';
+    elements.operationsUnifiedList.innerHTML = createOpsIssueMarkup(operationsReview.issues, '问题记录数据暂时不可用。');
     return;
   }
 
-  const createOpsButton = (recordId, title, tagValue, tagClass, meta, note) => {
-    const selectedClass = selectedOpsRecord && selectedOpsRecord.id === recordId
-      ? ' ops-item-selected'
-      : '';
+  const createOpsButton = (record, actionTypeLabel, actionTypeClass, title, meta, note, displayState) => {
+    const selectedClass = selectedOpsRecord && record && selectedOpsRecord.id === record.id ? ' ops-item-selected' : '';
+    const stateHtml = displayState ? `<span class="tag ${getOpsStateTagClass(displayState)}">${escapeHtml(getOpsStateLabel(displayState))}</span>` : '';
 
     return `
-      <button class="ops-item ops-item-button${selectedClass}" data-ops-record-id="${escapeHtml(recordId)}" type="button">
+      <button class="ops-item ops-item-button${selectedClass}" data-ops-record-id="${escapeHtml(record ? record.id : '')}" type="button">
         <div class="ops-item-top">
           <strong>${escapeHtml(title)}</strong>
-          <span class="tag ${tagClass}">${escapeHtml(tagValue)}</span>
+          <div class="tag-group">
+            <span class="tag ${actionTypeClass}">${escapeHtml(actionTypeLabel)}</span>
+            ${stateHtml}
+          </div>
         </div>
         <span class="ops-item-meta">${escapeHtml(meta)}</span>
         <span class="ops-item-note">${escapeHtml(note)}</span>
@@ -1027,122 +1647,78 @@ function renderOperationsReview() {
     `;
   };
 
-  elements.reviewLedgerMeta.textContent = `${operationsReview.summary.attention_count} 个待关注`;
-  elements.experimentMeta.textContent = `${operationsReview.summary.active_experiment_count} 个进行中`;
-  elements.feedbackMeta.textContent = feedback.run_date || '暂无报告';
-  elements.handoffMeta.textContent = `${operationsReview.summary.browser_ready_count} 个就绪`;
+  const listItems = [];
 
-  elements.reviewLedgerList.innerHTML = reviews.length === 0
-    ? createOpsIssueMarkup(operationsReview.reviews.issues, '暂时没有审核记录。')
-    : reviews
-      .map((entry, index) => {
-        return createOpsButton(
-          `review:${index}`,
-          translateDisplayValue(entry.job || 'Unnamed review'),
-          translateDisplayValue(entry.status || 'unknown'),
-          'tag-status',
-          `${entry.date_yyyy_mm_dd_ || entry.date_yyyy_mm_dd || entry.date || '暂无日期'} · ${entry.focus || '暂无重点'} · 负责人 ${translateDisplayValue(entry.follow_up_owner || 'unassigned')}`,
-          entry.blocker_notes || '点击查看详细信息。'
-        );
-      })
-      .join('');
+  // Feedback summary & root causes
+  if (feedback.path) {
+    listItems.push(createOpsButton(
+      operationsRecordById.get('feedback:summary') || null,
+      '系统异常', 'tag-risk',
+      `${feedback.summary.total_incidents} 起异常拦截`,
+      `${feedback.summary.session_errors} 会话阻塞 · ${feedback.summary.gateway_errors} 网关报错 · ${feedback.summary.user_feedback_signals} 用户信号`,
+      '点击查看完整反馈池与来源路径。'
+    ));
 
-  elements.experimentList.innerHTML = experiments.length === 0
-    ? createOpsIssueMarkup(operationsReview.experiments.issues, '暂时没有试验记录。')
-    : experiments
-      .map((entry, index) => {
-        return createOpsButton(
-          `experiment:${index}`,
-          translateDisplayValue(entry.experiment || 'Unnamed experiment'),
-          translateDisplayValue(entry.status || 'unknown'),
-          'tag-project',
-          `${entry.started || '暂无开始日期'} · ${translateDisplayValue(entry.job || 'unknown job')}`,
-          entry.next_step || entry.hypothesis || '点击查看实验详情。'
-        );
-      })
-      .join('');
+    (feedback.root_causes || []).forEach((cause, index) => {
+      const record = operationsRecordById.get(`feedback-cause:${index}`) || null;
+      listItems.push(createOpsButton(
+        record,
+        '反馈洞察', 'tag-risk',
+        `${cause.incidents} 起事件反馈 (${cause.share})`,
+        cause.example || '系统归因分析结果',
+        (record && record.reviewNote) || '点击查看应对措施。',
+        record && record.reviewState
+      ));
+    });
+  }
 
-  elements.feedbackSummary.innerHTML = feedback.path
-    ? `
-      <div class="ops-metrics">
-        <article class="ops-metric">
-          <span>事件数</span>
-          <strong>${escapeHtml(feedback.summary.total_incidents)}</strong>
-        </article>
-        <article class="ops-metric">
-          <span>会话错误</span>
-          <strong>${escapeHtml(feedback.summary.session_errors)}</strong>
-        </article>
-        <article class="ops-metric">
-          <span>网关错误</span>
-          <strong>${escapeHtml(feedback.summary.gateway_errors)}</strong>
-        </article>
-        <article class="ops-metric">
-          <span>用户信号</span>
-          <strong>${escapeHtml(feedback.summary.user_feedback_signals)}</strong>
-        </article>
-      </div>
-      <div class="ops-list">
-        ${createOpsButton(
-          'feedback:summary',
-          `反馈报告 ${feedback.run_date || '最新一期'}`,
-          `${feedback.summary.total_incidents} 起事件`,
-          'tag-status',
-          `${feedback.summary.session_errors} 会话错误 · ${feedback.summary.gateway_errors} 网关错误 · ${feedback.summary.user_feedback_signals} 用户信号`,
-          '点击查看完整反馈摘要与来源路径。'
-        )}
-        ${(feedback.root_causes || [])
-          .map((cause, index) => {
-            return createOpsButton(
-              `feedback-cause:${index}`,
-              cause.label,
-              cause.share,
-              'tag-risk',
-              `${cause.incidents} 起事件`,
-              cause.example || '点击查看详细信息。'
-            );
-          })
-          .join('')}
-      </div>
-    `
-    : createOpsIssueMarkup(feedback.issues, '暂未发现问题反馈。');
+  // Reviews
+  reviews.forEach((entry, index) => {
+    const record = operationsRecordById.get(`review:${index}`) || null;
+    listItems.push(createOpsButton(
+      record,
+      '质检拦截', 'tag-status',
+      translateDisplayValue(entry.status || 'unknown'),
+      `${entry.date_yyyy_mm_dd_ || entry.date_yyyy_mm_dd || entry.date || '暂无日期'} · ${entry.focus || '暂无重点'} · 负责人 ${translateDisplayValue(entry.follow_up_owner || 'unassigned')}`,
+      [record && record.reviewDeferUntil ? `暂缓到 ${formatDate(record.reviewDeferUntil)}` : '', record && record.reviewNote ? record.reviewNote : '', entry.blocker_notes].filter(Boolean)[0] || '点击处理重点项目任务。',
+      record && record.reviewState
+    ));
+  });
 
-  elements.handoffList.innerHTML = postHandoffs.records && postHandoffs.records.length > 0
-    ? `
-      <div class="ops-metrics">
-        <article class="ops-metric">
-          <span>总数</span>
-          <strong>${escapeHtml(postHandoffs.total_items)}</strong>
-        </article>
-        <article class="ops-metric">
-          <span>就绪</span>
-          <strong>${escapeHtml(postHandoffs.ready_count)}</strong>
-        </article>
-        <article class="ops-metric">
-          <span>阻塞</span>
-          <strong>${escapeHtml(postHandoffs.blocked_count)}</strong>
-        </article>
-      </div>
-      <div class="ops-list">
-        ${postHandoffs.records
-          .map((record, index) => {
-            const blockedReasons = record.blocked_reasons && record.blocked_reasons.length > 0
-              ? translateValueList(record.blocked_reasons).join('，')
-              : '点击查看详细信息。';
+  // Handoffs
+  if (postHandoffs.records && postHandoffs.records.length > 0) {
+    postHandoffs.records.forEach((record, index) => {
+      const opsRecord = operationsRecordById.get(`handoff:${index}`) || null;
+      const blockedReasons = record.blocked_reasons && record.blocked_reasons.length > 0 ? translateValueList(record.blocked_reasons).join('，') : '点击检查配置';
+      
+      listItems.push(createOpsButton(
+        opsRecord,
+        '交接拦截', 'tag-status',
+        translateDisplayValue(record.status || record.queue_status || 'unknown'),
+        `${record.platform || '未知平台'} · ${record.target_url || '无目标 URL'}`,
+        [opsRecord && opsRecord.reviewDeferUntil ? `暂缓到 ${formatDate(opsRecord.reviewDeferUntil)}` : '', opsRecord && opsRecord.reviewNote ? opsRecord.reviewNote : '', blockedReasons].filter(Boolean)[0] || blockedReasons,
+        opsRecord && opsRecord.reviewState
+      ));
+    });
+  }
 
-            return createOpsButton(
-              `handoff:${index}`,
-              record.item_id || translateDisplayValue('unknown item'),
-              translateDisplayValue(record.status || record.queue_status || 'unknown'),
-              'tag-status',
-              `${record.platform || '未知平台'} · ${record.target_url || '无目标 URL'}`,
-              blockedReasons
-            );
-          })
-          .join('')}
-      </div>
-    `
-    : createOpsIssueMarkup(postHandoffs.issues, '暂未发现待自动发布记录。');
+  // Experiments
+  experiments.forEach((entry, index) => {
+    const record = operationsRecordById.get(`experiment:${index}`) || null;
+    listItems.push(createOpsButton(
+      record,
+      '机器试验', 'tag-project',
+      translateDisplayValue(entry.status || 'unknown'),
+      `${entry.started || '暂无开始日期'} · ${translateDisplayValue(entry.job || 'unknown job')}`,
+      [record && record.reviewDeferUntil ? `暂缓到 ${formatDate(record.reviewDeferUntil)}` : '', record && record.reviewNote ? record.reviewNote : '', entry.next_step || entry.hypothesis].filter(Boolean)[0] || '探索性作业执行中',
+      record && record.reviewState
+    ));
+  });
+
+  const totalRecords = reviews.length + experiments.length + (postHandoffs.records || []).length + (feedback.root_causes || []).length + (feedback.path ? 1 : 0);
+  elements.operationsUnifiedMeta.textContent = `${totalRecords} 项异常拦截记录需人工介入`;
+  
+  elements.operationsUnifiedList.innerHTML = listItems.length > 0 ? listItems.join('') : '<div class="empty-state">当前没有任何拦截异常，系统健康度良好。</div>';
 
   attachOpsRecordSelection();
 }
@@ -1152,278 +1728,151 @@ function renderOpsSnapshot() {
   const modules = opsSnapshot.modules || {};
   const supervisor = modules.supervisor || null;
   const metrics = modules.metrics || null;
-  const feedback = modules.feedback || null;
   const posts = modules.posts || null;
   const replies = modules.replies || null;
   const fill = modules.fill || null;
   const threads = modules.threads || null;
   const warnings = Array.isArray(opsSnapshot.warnings) ? opsSnapshot.warnings : [];
-  const postBlockers = posts && Array.isArray(posts.blockers) ? posts.blockers.slice(0, 3) : [];
   const threadRecords = threads && Array.isArray(threads.records) ? threads.records : [];
   const filteredThreadRecords = threads ? getFilteredThreadRecords() : [];
 
-  elements.runHealthMeta.textContent = opsSnapshot.latest_run_date
-    ? `最近运行 ${opsSnapshot.latest_run_date}`
-    : '暂无运行记录';
-
-  elements.executionSnapshotMeta.textContent = [
+  elements.pipelineUnifiedMeta.textContent = [
     posts && posts.run_date ? `发帖 ${posts.run_date}` : '',
     fill && fill.run_date ? `填充 ${fill.run_date}` : '',
     replies && replies.run_date ? `回复 ${replies.run_date}` : ''
-  ]
-    .filter(Boolean)
-    .join(' · ') || opsSnapshot.latest_run_date || '暂无运行记录';
+  ].filter(Boolean).join(' · ') || opsSnapshot.latest_run_date || '暂无运行记录';
+
   elements.threadInboxFilter.disabled = !threads || threadRecords.length === 0;
   elements.threadInboxFilter.value = state.threadInboxFilter;
-  elements.bossThreadsMeta.textContent = threads && threads.run_date
-    ? `回复 ${threads.run_date} · ${filteredThreadRecords.length} / ${threadRecords.length}`
-    : '暂无回复包';
 
   if (!opsSnapshot.available) {
     const fallbackMarkup = warnings.length > 0
       ? createOpsIssueMarkup(warnings, '暂未找到可用的自动执行记录。')
       : '<div class="empty-state">暂未找到可用的自动执行记录。</div>';
-
-    elements.runHealthSummary.innerHTML = fallbackMarkup;
-    elements.executionSnapshotSummary.innerHTML = fallbackMarkup;
-    elements.bossThreadsSummary.innerHTML = fallbackMarkup;
+    elements.pipelineUnifiedList.innerHTML = fallbackMarkup;
     return;
   }
 
-  const runHealthItems = [];
+  const listItems = [];
 
+  // =====================
+  // 1. System Health
+  // =====================
   if (supervisor) {
     const failingSteps = supervisor.failing_steps && supervisor.failing_steps.length > 0
       ? supervisor.failing_steps.map((step) => `${step.name}（${translateDisplayValue(step.status)}）`).join('，')
-      : '最近一次摘要中没有失败步骤。';
+      : '无异常步骤。';
 
-    runHealthItems.push(`
+    listItems.push(`
       <article class="ops-item">
         <div class="ops-item-top">
           <strong>自动流程运行</strong>
-          <span class="tag ${getStatusTagClass(supervisor.run_status)}">${escapeHtml(formatOpsValue(supervisor.run_status))}</span>
+          <div class="tag-group">
+            <span class="tag tag-muted">监控器</span>
+            <span class="tag ${getStatusTagClass(supervisor.run_status)}">${escapeHtml(formatOpsValue(supervisor.run_status))}</span>
+          </div>
         </div>
-        <span class="ops-item-meta">${escapeHtml(formatOpsPairs([
-          ['日期', supervisor.run_date],
-          ['演练模式', supervisor.dry_run ? 'yes' : 'no']
-        ]))}</span>
-        <span class="ops-item-note">${escapeHtml(formatOpsPairs(Object.entries(supervisor.step_status_counts || {}).map(([status, count]) => [translateDisplayValue(status), count]), '没有记录步骤统计。'))}</span>
+        <span class="ops-item-meta">${escapeHtml(formatOpsPairs([['日期', supervisor.run_date], ['演练', supervisor.dry_run ? 'yes' : 'no']]))}</span>
         <span class="ops-item-note">${escapeHtml(failingSteps)}</span>
       </article>
     `);
   }
 
   if (metrics) {
-    runHealthItems.push(`
+    listItems.push(`
       <article class="ops-item">
         <div class="ops-item-top">
-          <strong>运行指标</strong>
-          <span class="tag ${getStatusTagClass(metrics.overall_status)}">${escapeHtml(formatOpsValue(metrics.overall_status))}</span>
+          <strong>大盘指标</strong>
+          <div class="tag-group">
+            <span class="tag tag-muted">系统指标</span>
+            <span class="tag ${getStatusTagClass(metrics.overall_status)}">${escapeHtml(formatOpsValue(metrics.overall_status))}</span>
+          </div>
         </div>
-        <span class="ops-item-meta">${escapeHtml(formatOpsPairs([
-          ['日期', metrics.run_date],
-          ['KV', metrics.kv_status],
-          ['Paddle', metrics.paddle_status],
-          ['分析', metrics.analytics_status]
-        ]))}</span>
-        <span class="ops-item-note">${escapeHtml(formatOpsPairs([
-          ['KV 条目', metrics.kv_entries],
-          ['用户数', metrics.analytics_users],
-          ['页面浏览', metrics.analytics_pageviews]
-        ]))}</span>
-        <span class="ops-item-note">${escapeHtml(formatOpsCurrency(metrics.paddle_gross_total, metrics.paddle_currency))}</span>
+        <span class="ops-item-meta">${escapeHtml(formatOpsPairs([['KV', metrics.kv_status], ['Paddle', metrics.paddle_status], ['分析', metrics.analytics_status]]))}</span>
+        <span class="ops-item-note">${escapeHtml(formatOpsPairs([['KV 条目', metrics.kv_entries], ['用户数', metrics.analytics_users]]))}</span>
       </article>
     `);
   }
 
-  for (const action of (feedback && feedback.suggested_actions ? feedback.suggested_actions : []).slice(0, 3)) {
-    runHealthItems.push(`
-      <article class="ops-item">
-        <div class="ops-item-top">
-          <strong>建议处理</strong>
-          <span class="tag tag-muted">反馈</span>
-        </div>
-        <span class="ops-item-note">${escapeHtml(action)}</span>
-      </article>
-    `);
-  }
-
-  elements.runHealthSummary.innerHTML = [
-    createOpsMetricsMarkup([
-      { label: '监督器', value: supervisor ? supervisor.run_status : 'n/a' },
-      { label: '指标', value: metrics ? metrics.overall_status : 'n/a' },
-      { label: '事件数', value: feedback ? feedback.total_incidents : 'n/a' },
-      { label: '告警', value: warnings.length }
-    ]),
-    runHealthItems.length > 0
-      ? `<div class="ops-list">${runHealthItems.join('')}</div>`
-      : '<div class="empty-state">暂未发现自动化状态详情。</div>',
-    warnings.length > 0 ? createOpsIssueMarkup(warnings, '') : ''
-  ].join('');
-
-  const executionItems = [];
-
+  // =====================
+  // 2. Automated Execution Syncs
+  // =====================
   if (posts) {
-    executionItems.push(`
+    listItems.push(`
       <article class="ops-item">
         <div class="ops-item-top">
           <strong>发帖准备情况</strong>
-          <span class="tag ${getStatusTagClass(posts.ready_for_browser_review_count > 0 ? 'ready' : 'warning')}">${escapeHtml(formatOpsValue(posts.mode))}</span>
+          <div class="tag-group">
+            <span class="tag tag-muted">生产线</span>
+            <span class="tag ${getStatusTagClass(posts.ready_for_browser_review_count > 0 ? 'ready' : 'warning')}">${escapeHtml(formatOpsValue(posts.mode))}</span>
+          </div>
         </div>
-        <span class="ops-item-meta">${escapeHtml(formatOpsPairs([
-          ['日期', posts.run_date],
-          ['浏览器就绪', posts.ready_for_browser_review_count],
-          ['缺少目标 URL', posts.missing_target_url_count]
-        ]))}</span>
-        <span class="ops-item-note">${escapeHtml(formatOpsPairs([
-          ['新生成', posts.generated_count],
-          ['已存在', posts.existing_count],
-          ['错误', posts.error_count]
-        ]))}</span>
+        <span class="ops-item-meta">就绪：${posts.ready_for_browser_review_count} · 新生成：${posts.generated_count} · 错误：${posts.error_count}</span>
+        <span class="ops-item-note">缺少目标 URL：${posts.missing_target_url_count}</span>
       </article>
     `);
   }
 
   if (fill) {
-    executionItems.push(`
+    listItems.push(`
       <article class="ops-item">
         <div class="ops-item-top">
-          <strong>自动填写</strong>
-          <span class="tag ${getStatusTagClass(fill.cdp_status)}">${escapeHtml(formatOpsValue(fill.cdp_status))}</span>
+          <strong>自动表单填写</strong>
+          <div class="tag-group">
+            <span class="tag tag-muted">生产线</span>
+            <span class="tag ${getStatusTagClass(fill.cdp_status)}">${escapeHtml(formatOpsValue(fill.cdp_status))}</span>
+          </div>
         </div>
-        <span class="ops-item-meta">${escapeHtml(formatOpsPairs([
-          ['日期', fill.run_date],
-          ['发帖就绪', fill.posts.ready],
-          ['发帖待审核', fill.posts.approval_pending],
-          ['发帖阻塞', fill.posts.blocked]
-        ]))}</span>
-        <span class="ops-item-note">${escapeHtml(formatOpsPairs([
-          ['回复就绪', fill.replies.ready],
-          ['回复待审核', fill.replies.approval_pending],
-          ['回复阻塞', fill.replies.blocked]
-        ]))}</span>
+        <span class="ops-item-meta">发帖（就绪 ${fill.posts.ready} / 待审 ${fill.posts.approval_pending} / 阻塞 ${fill.posts.blocked}）</span>
+        <span class="ops-item-note">回复（就绪 ${fill.replies.ready} / 待审 ${fill.replies.approval_pending} / 阻塞 ${fill.replies.blocked}）</span>
       </article>
     `);
   }
 
-  if (replies) {
-    executionItems.push(`
-      <article class="ops-item">
-        <div class="ops-item-top">
-          <strong>自动回复</strong>
-          <span class="tag ${getStatusTagClass(replies.ready_count > 0 ? 'ready' : 'pending')}">${escapeHtml(formatOpsValue(replies.mode))}</span>
-        </div>
-        <span class="ops-item-meta">${escapeHtml(formatOpsPairs([
-          ['日期', replies.run_date],
-          ['回复任务数', replies.total_packets],
-          ['就绪', replies.ready_count],
-          ['阻塞', replies.blocked_count]
-        ]))}</span>
-        <span class="ops-item-note">${escapeHtml(formatOpsPairs([
-          ['新生成任务', replies.generated_job_count],
-          ['新生成结果', replies.generated_result_count],
-          ['错误', replies.error_count]
-        ]))}</span>
-      </article>
-    `);
-  }
-
-  elements.executionSnapshotSummary.innerHTML = [
-    createOpsMetricsMarkup([
-      { label: '填写待审核', value: fill ? fill.approval_pending_total : 'n/a' },
-      { label: '填充记录', value: fill ? fill.total_records : 'n/a' },
-      { label: '回复任务数', value: replies ? replies.total_packets : 'n/a' },
-      { label: '回复就绪', value: replies ? replies.ready_count : 'n/a' }
-    ]),
-    executionItems.length > 0
-      ? `<div class="ops-list">${executionItems.join('')}</div>`
-      : '<div class="empty-state">暂未发现执行进度记录。</div>',
-    postBlockers.length > 0
-      ? `
-        <div class="ops-list">
-          ${postBlockers
-            .map((record) => {
-              return `
-                <article class="ops-item">
-                  <div class="ops-item-top">
-                    <strong>${escapeHtml(record.title || record.item_id || '未知项目')}</strong>
-                    <span class="tag ${getStatusTagClass(record.status || 'warning')}">${escapeHtml(formatOpsValue(record.status || 'blocked'))}</span>
-                  </div>
-                  <span class="ops-item-meta">${escapeHtml(formatOpsPairs([
-                    ['平台', record.platform],
-                    ['队列', record.queue_status]
-                  ]))}</span>
-                  <span class="ops-item-note">${escapeHtml(record.reason ? translateDisplayValue(record.reason) : '暂无阻塞原因记录。')}</span>
-                </article>
-              `;
-            })
-            .join('')}
-        </div>
-      `
-      : ''
-  ].join('');
-
+  // =====================
+  // 3. Thread Inbox (Actionable Items)
+  // =====================
   if (threads && !filteredThreadRecords.some((record) => record.reply_id === state.selectedThreadId)) {
     state.selectedThreadId = filteredThreadRecords[0] ? filteredThreadRecords[0].reply_id : null;
   }
 
-  elements.bossThreadsSummary.innerHTML = threads
-    ? [
-      createOpsMetricsMarkup([
-        { label: '待人工判断', value: threads.needs_reply_count },
-        { label: '可直接回复', value: threads.ready_count },
-        { label: '待跟进', value: threads.follow_up_count },
-        { label: '已处理', value: threads.done_count }
-      ]),
-      filteredThreadRecords.length > 0
-        ? `
-          <div class="ops-list">
-            ${filteredThreadRecords
-              .map((record) => {
-                const flags = [
-                  record.manual_required ? 'manual review' : '',
-                  record.has_sensitive_content ? 'sensitive' : '',
-                  record.handoff_ready ? 'handoff ready' : '',
-                  record.blocked_reasons && record.blocked_reasons.length > 0 ? 'blocked' : ''
-                ].filter(Boolean).join(' · ');
-                const selectedClass = state.detailMode === 'thread' && state.selectedThreadId === record.reply_id
-                  ? ' ops-item-selected'
-                  : '';
+  if (filteredThreadRecords.length > 0) {
+    filteredThreadRecords.forEach((record) => {
+      const flags = [...formatThreadFlags(record)];
+      const selectedClass = state.detailMode === 'thread' && state.selectedThreadId === record.reply_id
+        ? ' ops-item-selected'
+        : '';
 
-                return `
-                  <button class="ops-item ops-item-button${selectedClass}" data-thread-id="${escapeHtml(record.reply_id || '')}" type="button">
-                    <div class="ops-item-top">
-                      <strong>${escapeHtml(record.reply_id || '未知回复')}</strong>
-                      <span class="tag ${getThreadStateTagClass(record.review_state)}">${escapeHtml(getThreadStateLabel(record.review_state))}</span>
-                    </div>
-                    <span class="ops-item-meta">${escapeHtml(formatOpsPairs([
-                      ['平台', record.platform],
-                      ['时间', formatDate(record.created_at)],
-                      ['评分', record.classification_score],
-                      ['来源', record.source_kind]
-                    ]))}</span>
-                    <span class="ops-item-note">${escapeHtml(translateValueList(flags ? flags.split(' · ') : []).join(' · ') || '暂无门禁标记。')}</span>
-                    <span class="ops-item-note">${escapeHtml(record.blocked_reasons && record.blocked_reasons.length > 0 ? translateValueList(record.blocked_reasons).join('，') : record.review_note || record.draft_preview || '暂无草稿预览。')}</span>
-                  </button>
-                `;
-              })
-              .join('')}
+      listItems.push(`
+        <button class="ops-item ops-item-button${selectedClass}" data-thread-id="${escapeHtml(record.reply_id || '')}" type="button">
+          <div class="ops-item-top">
+            <strong>${escapeHtml(record.reply_id || '未知回复')}</strong>
+             <div class="tag-group">
+              <span class="tag tag-muted">回复流</span>
+              <span class="tag ${getThreadStateTagClass(record.review_state)}">${escapeHtml(getThreadStateLabel(record.review_state))}</span>
+            </div>
           </div>
-        `
-        : '<div class="empty-state">当前筛选下没有匹配的回复任务。</div>'
-    ].join('')
-    : '<div class="empty-state">当前还没有需要人工接手的回复任务。</div>';
+          <span class="ops-item-meta">${escapeHtml(formatOpsPairs([['平台', record.platform], ['时间', formatDate(record.created_at)], ['来源', getProcessingLaneTypeLabel(record.source_kind)]]))}</span>
+          <span class="ops-item-note">${escapeHtml(record.blocked_reasons && record.blocked_reasons.length > 0 ? translateValueList(record.blocked_reasons).join('，') : record.review_note || record.draft_preview || '暂无草稿预览。')}</span>
+        </button>
+      `);
+    });
+  } else if (threads && threadRecords.length > 0) {
+    listItems.push('<div class="empty-state" style="padding: 24px;">当前筛选下没有匹配的回复任务。</div>');
+  } else {
+    listItems.push('<div class="empty-state" style="padding: 24px;">当前还没有需要人工处理的回复任务。</div>');
+  }
 
+  elements.pipelineUnifiedList.innerHTML = listItems.join('');
   attachThreadSelection();
 }
-
 function renderSummary() {
   const summary = state.data.summary;
   const cards = [
-    { label: '等待审核', value: summary.pending_approvals },
-    { label: '已准备好', value: summary.queued_items },
-    { label: '平台数', value: summary.platform_count },
-    { label: '状态数', value: summary.status_count }
+    { label: '待补审批记录', value: summary.pending_approvals, note: '审批记录表口径' },
+    { label: '已进入队列', value: summary.queued_items, note: '内容列表口径' },
+    { label: '覆盖平台', value: summary.platform_count, note: '涉及平台数量' },
+    { label: '状态类型', value: summary.status_count, note: '当前状态种类' }
   ];
 
   elements.summaryCards.innerHTML = cards
@@ -1432,16 +1881,44 @@ function renderSummary() {
         <article class="summary-card">
           <p>${escapeHtml(card.label)}</p>
           <strong>${escapeHtml(card.value)}</strong>
+          <span class="summary-card-note">${escapeHtml(card.note)}</span>
         </article>
       `;
     })
     .join('');
 }
 
+function getQueueListPrimaryMeta(item) {
+  return [
+    cleanClientValue(item.platform) || '未知平台',
+    cleanClientValue(item.project) || '',
+    cleanClientValue(item.action_label || item.action_state)
+      ? `当前：${translateDisplayValue(item.action_label || item.action_state)}`
+      : ''
+  ].filter(Boolean).join(' · ');
+}
+
+function getQueueListNote(item) {
+  const sourcePreview = cleanClientValue(item.source_details && item.source_details.preview)
+    .split(/\r?\n/)
+    .find((line) => cleanClientValue(line));
+
+  if (item.missing_info && item.missing_info.length > 0) {
+    return `缺失：${translateMissingInfoList(item.missing_info).join('，')}`;
+  }
+
+  return cleanClientValue(item.review_note)
+    || cleanClientValue(item.reason)
+    || cleanClientValue(item.notes)
+    || sourcePreview
+    || '打开后查看详情并直接处理。';
+}
+
 function renderFilters() {
-  const { statuses, platforms, projects, risks } = state.data.filters;
+  const { statuses, platforms, projects, risks, action_states } = state.data.filters;
   createOptions(elements.projectFilter, projects, state.filters.project);
   createOptions(elements.statusFilter, statuses, state.filters.status);
+  createOptions(elements.actionStateFilter, action_states || [], state.filters.action_state);
   createOptions(elements.platformFilter, platforms, state.filters.platform);
   createOptions(elements.riskFilter, risks, state.filters.risk);
 }
@@ -1527,11 +2004,24 @@ function attachOpsRecordSelection() {
 function resetQueueFilters() {
   state.filters.project = 'all';
   state.filters.status = 'all';
+  state.filters.action_state = 'all';
   state.filters.platform = 'all';
   state.filters.risk = 'all';
   state.filters.search = '';
+  state.inboxTab = 'pending';
   renderFilters();
   elements.searchInput.value = '';
+  renderInboxTabBar();
+}
+
+function handleFilterReset() {
+  if (!state.data) {
+    return;
+  }
+
+  clearActionFeedback();
+  resetQueueFilters();
+  renderList();
 }
 
 function navigateToQueueItem(itemId, options = {}) {
@@ -1554,6 +2044,18 @@ function navigateToQueueItem(itemId, options = {}) {
   setActiveSection('queue', { syncContext: false });
 }
 
+function navigateToThread(replyId) {
+  if (!getThreadRecords().some((record) => record.reply_id === replyId)) {
+    return;
+  }
+
+  clearActionFeedback();
+  state.detailMode = 'thread';
+  state.selectedThreadId = replyId;
+  state.selectedOpsRecordId = null;
+  setActiveSection('pipeline', { syncContext: false });
+}
+
 function navigateToOpsRecord(recordId) {
   if (!getOperationsRecords().some((record) => record.id === recordId)) {
     return;
@@ -1564,6 +2066,22 @@ function navigateToOpsRecord(recordId) {
   state.selectedOpsRecordId = recordId;
   state.selectedThreadId = null;
   setActiveSection('operations', { syncContext: false });
+}
+
+function navigateByTarget(kind, targetId) {
+  if (kind === 'queue') {
+    navigateToQueueItem(targetId, { resetFilters: true });
+    return;
+  }
+
+  if (kind === 'thread') {
+    navigateToThread(targetId);
+    return;
+  }
+
+  if (kind === 'ops') {
+    navigateToOpsRecord(targetId);
+  }
 }
 
 function renderContextPanel(actions) {
@@ -1617,12 +2135,14 @@ function renderManagementBuckets(items = (state.data && state.data.items) || [])
   const buckets = {
     needs_review: items.filter((item) => item.action_state === 'needs_review'),
     ready_to_execute: items.filter((item) => item.action_state === 'ready_to_execute'),
-    missing_info: items.filter((item) => item.action_state === 'missing_info')
+    missing_info: items.filter((item) => item.action_state === 'missing_info'),
+    deferred: items.filter((item) => item.action_state === 'deferred')
   };
 
   elements.needsReviewCount.textContent = String(buckets.needs_review.length);
   elements.readyToExecuteCount.textContent = String(buckets.ready_to_execute.length);
   elements.needsInfoCount.textContent = String(buckets.missing_info.length);
+  elements.deferredCount.textContent = String(buckets.deferred.length);
 
   elements.needsReviewList.innerHTML = createBucketMarkup(
     buckets.needs_review,
@@ -1635,6 +2155,10 @@ function renderManagementBuckets(items = (state.data && state.data.items) || [])
   elements.needsInfoList.innerHTML = createBucketMarkup(
     buckets.missing_info,
     '当前没有资料不全的内容。'
+  );
+  elements.deferredList.innerHTML = createBucketMarkup(
+    buckets.deferred,
+    '当前没有已暂缓的内容。'
   );
 
   attachBucketSelection();
@@ -1655,6 +2179,10 @@ function canRunQueueAction(item, action) {
 
   if (action === 'mark_ready') {
     return item.action_state !== 'ready_to_execute';
+  }
+
+  if (action === 'mark_deferred') {
+    return item.action_state !== 'deferred';
   }
 
   if (action === 'restore_auto') {
@@ -1696,67 +2224,7 @@ function getNextQueueSelection(processedIds, currentId = state.selectedId) {
   return null;
 }
 
-function renderBatchActionPanel() {
-  if (!state.data) {
-    elements.batchActionPanel.hidden = true;
-    elements.batchActionSummary.textContent = '';
-    elements.batchActionStatus.textContent = '';
-    elements.batchActionBar.innerHTML = '';
-    return;
-  }
 
-  const filteredItems = getFilteredItems();
-  const isPending = state.actionPending || state.threadPending || state.batchPending;
-  const actions = [
-    { action: 'approve', label: '批量批准并入队', className: 'button button-primary' },
-    { action: 'reject', label: '批量驳回', className: 'button button-danger' },
-    { action: 'mark_missing_info', label: '批量标记缺信息', className: 'button' },
-    { action: 'mark_ready', label: '批量标记可执行', className: 'button' },
-    { action: 'restore_auto', label: '批量恢复自动判断', className: 'button' }
-  ];
-
-  elements.batchActionPanel.hidden = false;
-  elements.batchActionSummary.textContent = `当前筛选 ${filteredItems.length} 条`;
-  elements.batchActionActor.disabled = isPending;
-  elements.batchActionNote.disabled = isPending;
-  elements.batchActionActor.value = state.actor;
-
-  if (filteredItems.length === 0) {
-    elements.batchActionBar.innerHTML = '<div class="empty-state">当前筛选结果为空，暂时没有可批量处理的内容。</div>';
-  } else {
-    elements.batchActionBar.innerHTML = actions
-      .map((config) => {
-        const eligibleCount = getActionableQueueIds(config.action, filteredItems).length;
-        const disabled = isPending || eligibleCount === 0;
-
-        return `
-          <button
-            class="${config.className}"
-            data-batch-action="${escapeHtml(config.action)}"
-            type="button"
-            ${disabled ? 'disabled' : ''}
-          >
-            ${escapeHtml(`${config.label}（${eligibleCount}）`)}
-          </button>
-        `;
-      })
-      .join('');
-  }
-
-  if (state.batchActionFeedback) {
-    elements.batchActionStatus.textContent = state.batchActionFeedback.message;
-    elements.batchActionStatus.className = `detail-action-status batch-action-status is-${state.batchActionFeedback.tone}`;
-  } else {
-    elements.batchActionStatus.textContent = '系统会只处理当前筛选结果里适合该动作的内容。';
-    elements.batchActionStatus.className = 'detail-action-status batch-action-status';
-  }
-
-  document.querySelectorAll('[data-batch-action]').forEach((button) => {
-    button.addEventListener('click', () => {
-      runBatchQueueAction(button.dataset.batchAction);
-    });
-  });
-}
 
 function renderActionLogPanel(target) {
   if (!target || !state.data) {
@@ -1767,7 +2235,15 @@ function renderActionLogPanel(target) {
   }
 
   const isQueueMode = state.detailMode === 'queue';
-  const actionLog = isQueueMode ? state.data.action_log : state.data.thread_action_log;
+  const isThreadMode = state.detailMode === 'thread';
+  const isOpsMode = state.detailMode === 'ops';
+  const actionLog = isQueueMode
+    ? state.data.action_log
+    : isThreadMode
+      ? state.data.thread_action_log
+      : isOpsMode
+        ? state.data.ops_action_log
+        : null;
 
   if (!actionLog) {
     elements.actionLogPanel.hidden = true;
@@ -1778,7 +2254,9 @@ function renderActionLogPanel(target) {
 
   const entries = isQueueMode
     ? (actionLog.entries || []).filter((entry) => entry.item_id === target.id).slice(0, 5)
-    : (actionLog.entries || []).filter((entry) => entry.reply_id === target.reply_id).slice(0, 5);
+    : isThreadMode
+      ? (actionLog.entries || []).filter((entry) => entry.reply_id === target.reply_id).slice(0, 5)
+      : (actionLog.entries || []).filter((entry) => entry.ui_id === target.id || entry.action_id === target.actionId).slice(0, 5);
 
   elements.actionLogPanel.hidden = false;
 
@@ -1805,10 +2283,22 @@ function renderActionLogPanel(target) {
           noteParts.push(`原因：${translateMissingInfoList(entry.reasons).join('，')}`);
         }
 
+        if (isQueueMode && entry.defer_until_utc) {
+          noteParts.push(`暂缓至：${formatDate(entry.defer_until_utc)}`);
+        }
+
+        if (isOpsMode && entry.manual_state) {
+          noteParts.push(`状态：${getOpsStateLabel(entry.manual_state)}`);
+        }
+
+        if (isOpsMode && entry.defer_until_utc) {
+          noteParts.push(`暂缓至：${formatDate(entry.defer_until_utc)}`);
+        }
+
         return `
           <article class="ops-item">
             <div class="ops-item-top">
-              <strong>${escapeHtml(translateDisplayValue(entry.action || 'unknown'))}</strong>
+              <strong>${escapeHtml(isOpsMode ? getOpsActionLabel(entry.action || 'unknown') : translateDisplayValue(entry.action || 'unknown'))}</strong>
               <span class="tag tag-muted">${escapeHtml(entry.actor || '—')}</span>
             </div>
             <span class="ops-item-meta">${escapeHtml(formatDate(entry.timestamp_utc))}</span>
@@ -1839,7 +2329,10 @@ function getFilteredItems() {
         .toLowerCase()
         .includes(searchTerm);
 
-    return projectMatch && statusMatch && platformMatch && riskMatch && searchMatch;
+    const actionStateMatch = state.filters.action_state === 'all'
+      || cleanClientValue(item.action_state) === state.filters.action_state;
+
+    return projectMatch && statusMatch && platformMatch && riskMatch && searchMatch && actionStateMatch && matchesInboxTab(item);
   });
 }
 
@@ -1848,7 +2341,6 @@ function renderList() {
     elements.resultCount.textContent = '0 / 0';
     elements.listMeta.textContent = '数据源诊断';
     elements.itemList.innerHTML = '<div class="empty-state">看板数据暂时不可用。</div>';
-    renderBatchActionPanel();
     renderManagementBuckets([]);
     renderDetail(null, 'queue', '看板数据暂时不可用。');
     return;
@@ -1859,9 +2351,10 @@ function renderList() {
 
   elements.resultCount.textContent = `${filteredItems.length} / ${totalItems}`;
   elements.listMeta.textContent = `内容日期 ${state.data.metadata.queue_run_date || '—'}`;
+  renderInboxTabBar();
+  attachInboxTabListeners();
   renderManagementBuckets(state.data.items);
-  renderBatchActionPanel();
-  renderRecentActivity();
+
 
   if (!filteredItems.some((item) => item.id === state.selectedId)) {
     state.selectedId = filteredItems[0] ? filteredItems[0].id : null;
@@ -1873,26 +2366,27 @@ function renderList() {
     renderOpsSnapshot();
     return;
   }
+  const previousScrollTop = elements.itemList.scrollTop;
 
   elements.itemList.innerHTML = filteredItems
     .map((item) => {
       const selectedClass = state.detailMode === 'queue' && item.id === state.selectedId ? ' item-row-selected' : '';
       const approvalTag = item.approval_match ? '<span class="tag tag-muted">已匹配审核</span>' : '';
+      const projectTag = item.project ? `<span class="tag tag-muted">${escapeHtml(item.project)}</span>` : '';
 
       return `
         <button class="item-row${selectedClass}" data-item-id="${escapeHtml(item.id)}" data-item-source="list" type="button">
-          <div class="item-row-top">
-            <strong>${escapeHtml(item.title)}</strong>
+          <div class="item-row-top" style="display: block; margin-bottom: 8px;">
+            <strong style="display: block; font-size: 14px; margin-bottom: 6px;">${escapeHtml(item.title)}</strong>
             <div class="tag-group">
-              <span class="tag tag-project">${escapeHtml(item.project || '未分配')}</span>
-              <span class="tag tag-status">${escapeHtml(translateDisplayValue(item.status))}</span>
-              <span class="tag tag-risk">${escapeHtml(translateDisplayValue(item.risk))}</span>
+              <span class="tag tag-status">${escapeHtml(translateDisplayValue(item.action_label || item.action_state || item.status))}</span>
+              ${projectTag}
+              <span class="tag tag-muted">${escapeHtml(item.platform || '未知平台')}</span>
               ${approvalTag}
             </div>
           </div>
           <div class="item-row-meta">
-            <span>${escapeHtml(item.platform)}</span>
-            <span>${escapeHtml(item.source || '无来源')}</span>
+            <span style="color: #64748b; line-height: 1.4;">${escapeHtml(getQueueListNote(item))}</span>
           </div>
         </button>
       `;
@@ -1901,12 +2395,18 @@ function renderList() {
 
   const selectedItem = filteredItems.find((item) => item.id === state.selectedId) || filteredItems[0];
   attachBucketSelection();
+  
+  // Restore scroll position to prevent jitter
+  requestAnimationFrame(() => {
+    elements.itemList.scrollTop = previousScrollTop;
+  });
+  
   renderDetailForCurrentMode('当前还没有可展示的详情。', selectedItem);
   renderOpsSnapshot();
 }
 
 function renderThreadActionPanel(thread) {
-  const isPending = state.threadPending || state.actionPending || state.batchPending;
+  const isPending = state.threadPending || state.actionPending || state.opsPending;
   const buttons = [];
 
   if (thread.review_state !== 'ready') {
@@ -1933,6 +2433,10 @@ function renderThreadActionPanel(thread) {
   elements.detailActionActor.value = state.actor;
   elements.detailActionActor.disabled = isPending;
   elements.detailActionNote.disabled = isPending;
+  state.detailDeferMode = '';
+  elements.detailActionDeferUntil.disabled = true;
+  elements.detailActionDeferUntil.value = '';
+  syncDeferInputs();
   elements.detailActionBar.innerHTML = buttons.length > 0
     ? buttons
       .map((button) => {
@@ -1965,12 +2469,79 @@ function renderThreadActionPanel(thread) {
   });
 }
 
+function renderOpsActionPanel(record) {
+  const isPending = state.opsPending || state.actionPending || state.threadPending;
+  const buttons = [];
+
+  if (record.reviewState !== 'review') {
+    buttons.push({ action: 'mark_review', label: '标记需复核', className: 'button button-danger' });
+  }
+
+  if (record.reviewState !== 'execute') {
+    buttons.push({ action: 'mark_execute', label: '标记推进执行', className: 'button button-primary' });
+  }
+
+  if (record.reviewState !== 'defer') {
+    buttons.push({ action: 'mark_defer', label: '标记暂缓', className: 'button' });
+  }
+
+  if (record.reviewState !== 'done') {
+    buttons.push({ action: 'mark_done', label: '标记已处理', className: 'button' });
+  }
+
+  if (record.reviewOverride) {
+    buttons.push({ action: 'restore_auto', label: '恢复系统判断', className: 'button' });
+  }
+
+  elements.detailActionPanel.hidden = false;
+  elements.detailActionActor.value = state.actor;
+  elements.detailActionActor.disabled = isPending;
+  elements.detailActionNote.disabled = isPending;
+  state.detailDeferMode = record.reviewState === 'defer' ? 'ops' : '';
+  elements.detailActionDeferUntil.disabled = isPending;
+  elements.detailActionDeferUntil.value = toDatetimeLocalValue(record.reviewDeferUntil);
+  syncDeferInputs();
+  elements.detailActionBar.innerHTML = buttons.length > 0
+    ? buttons
+      .map((button) => {
+        return `
+          <button
+            class="${button.className}"
+            data-ops-action="${escapeHtml(button.action)}"
+            type="button"
+            ${isPending ? 'disabled' : ''}
+          >
+            ${escapeHtml(button.label)}
+          </button>
+        `;
+      })
+      .join('')
+    : '<div class="empty-state">当前记录没有可用动作。</div>';
+
+  if (state.opsActionFeedback && state.opsActionFeedback.recordId === record.id) {
+    elements.detailActionStatus.textContent = state.opsActionFeedback.message;
+    elements.detailActionStatus.className = `detail-action-status is-${state.opsActionFeedback.tone}`;
+  } else {
+    elements.detailActionStatus.textContent = '';
+    elements.detailActionStatus.className = 'detail-action-status';
+  }
+
+  document.querySelectorAll('[data-ops-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      runOpsAction(button.dataset.opsAction);
+    });
+  });
+}
+
 function renderActionPanel(item) {
   if (!item) {
     elements.detailActionPanel.hidden = true;
     elements.detailActionBar.innerHTML = '';
     elements.detailActionStatus.textContent = '';
     elements.detailActionStatus.className = 'detail-action-status';
+    state.detailDeferMode = '';
+    elements.detailActionDeferUntil.value = '';
+    syncDeferInputs();
     return;
   }
 
@@ -1979,15 +2550,23 @@ function renderActionPanel(item) {
     return;
   }
 
+  if (state.detailMode === 'ops') {
+    renderOpsActionPanel(item);
+    return;
+  }
+
   if (state.detailMode !== 'queue') {
     elements.detailActionPanel.hidden = true;
     elements.detailActionBar.innerHTML = '';
     elements.detailActionStatus.textContent = '';
     elements.detailActionStatus.className = 'detail-action-status';
+    state.detailDeferMode = '';
+    elements.detailActionDeferUntil.value = '';
+    syncDeferInputs();
     return;
   }
 
-  const isPending = state.actionPending || state.threadPending || state.batchPending;
+  const isPending = state.actionPending || state.threadPending || state.opsPending;
   const buttons = [];
 
   if (item.status === 'approval_pending' && item.approval_match) {
@@ -2003,6 +2582,10 @@ function renderActionPanel(item) {
     buttons.push({ action: 'mark_ready', label: '标记可执行', className: 'button' });
   }
 
+  if (item.action_state !== 'deferred') {
+    buttons.push({ action: 'mark_deferred', label: '标记暂缓', className: 'button' });
+  }
+
   if (item.review_override) {
     buttons.push({ action: 'restore_auto', label: '恢复自动判断', className: 'button' });
   }
@@ -2011,6 +2594,10 @@ function renderActionPanel(item) {
   elements.detailActionActor.value = state.actor;
   elements.detailActionActor.disabled = isPending;
   elements.detailActionNote.disabled = isPending;
+  state.detailDeferMode = item.action_state === 'deferred' ? 'queue' : '';
+  elements.detailActionDeferUntil.disabled = isPending;
+  elements.detailActionDeferUntil.value = toDatetimeLocalValue(item.review_defer_until);
+  syncDeferInputs();
   elements.detailActionBar.innerHTML = buttons.length > 0
     ? buttons
       .map((button) => {
@@ -2044,47 +2631,56 @@ function renderActionPanel(item) {
 }
 
 function renderQueueDetail(item) {
-  elements.detailTitle.textContent = '内容详情';
-  elements.detailSubtitle.textContent = '这里显示内容本身、审核情况和你可以直接做的处理。';
-  elements.primaryJsonTitle.textContent = '原始内容数据';
-  elements.secondaryJsonTitle.textContent = '原始审核数据';
+  elements.detailTitle.textContent = item.title || '内容详情';
+  elements.detailSubtitle.textContent = `${escapeHtml(item.platform || '')}${item.project ? ' · ' + item.project : ''}`.trim() || '待审核内容';
+  elements.primaryJsonTitle.textContent = '原始内容';
+  elements.secondaryJsonTitle.textContent = '原始审核';
 
-  const rows = [
-    ['标题', item.title || '—'],
-    ['项目', item.project || '—'],
-    ['当前状态', translateDisplayValue(item.action_label || item.action_state)],
-    ['平台', item.platform || '—'],
-    ['状态', translateDisplayValue(item.status)],
-    ['风险', translateDisplayValue(item.risk)],
+  // ---- CORE: The content itself ----
+  const coreLines = [];
+  if (item.title) coreLines.push(`<p class="insight-headline">${escapeHtml(item.title)}</p>`);
+  if (item.notes) coreLines.push(`<p class="insight-body">${escapeHtml(item.notes)}</p>`);
+  if (item.reason) coreLines.push(`<p class="insight-body insight-muted">审核原因：${escapeHtml(item.reason)}</p>`);
+  const hasCoreContent = coreLines.length > 0;
+  elements.detailInsightCore.style.display = hasCoreContent ? '' : 'none';
+  elements.detailInsightCore.innerHTML = hasCoreContent
+    ? `<div class="insight-label">内容本体</div>${coreLines.join('')}`
+    : '';
+
+  // ---- DIAGNOSIS: AI flags / risk / missing info ----
+  const diagLines = [];
+  if (item.risk && item.risk !== 'none') {
+    diagLines.push(`<div class="insight-flag flag-${item.risk === 'high' ? 'danger' : 'warn'}">风险：${escapeHtml(translateDisplayValue(item.risk))}</div>`);
+  }
+  if (item.missing_info && item.missing_info.length) {
+    diagLines.push(`<div class="insight-flag flag-warn">缺失资料：${escapeHtml(translateMissingInfoList(item.missing_info).join('，'))}</div>`);
+  }
+  const statusVal = translateDisplayValue(item.action_label || item.action_state);
+  if (statusVal) diagLines.push(`<div class="insight-flag flag-info">当前状态：${escapeHtml(statusVal)}</div>`);
+  const hasDiag = diagLines.length > 0;
+  elements.detailInsightDiagnosis.style.display = hasDiag ? '' : 'none';
+  elements.detailInsightDiagnosis.innerHTML = hasDiag
+    ? `<div class="insight-label">审核诊断</div>${diagLines.join('')}`
+    : '';
+
+  // ---- METADATA: Audit trail details ----
+  const metaRows = [
+    ['平台', item.platform],
+    ['项目', item.project],
     ['分类', translateDisplayValue(item.category)],
     ['负责人', translateDisplayValue(item.owner)],
+    ['提交人', item.requested_by],
     ['提交时间', formatDate(item.requested_at)],
-    ['提交人', item.requested_by || '—'],
-    ['审核单号', item.approval_ticket || '—'],
-    ['审核记录号', item.approval_entry_id || '—'],
-    ['缺少资料', item.missing_info && item.missing_info.length ? translateMissingInfoList(item.missing_info).join('，') : '—'],
-    ['人工覆盖', item.review_override ? '是' : '否'],
-    ['最后动作', translateDisplayValue(item.review_last_action)],
-    ['处理备注', item.review_note || '—'],
-    ['处理人', item.review_updated_by || '—'],
+    ['审核单号', item.approval_ticket],
+    ['记录号', item.approval_entry_id],
+    ['处理人', item.review_updated_by],
     ['处理时间', formatDate(item.review_updated_at)],
-    ['审核原因', item.reason || '—'],
-    ['备注', item.notes || '—'],
-    ['来源', item.source || '—'],
-    ['源文件可读', item.source_details && item.source_details.available ? '是' : '否'],
-    ['识别资源数', item.source_details ? String(item.source_details.artifact_count || 0) : '0']
-  ];
-
-  elements.detailGrid.innerHTML = rows
-    .map(([label, value]) => {
-      return `
-        <div class="detail-row">
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value)}</strong>
-        </div>
-      `;
-    })
-    .join('');
+    ['暂缓到', formatDate(item.review_defer_until)],
+    ['处理备注', item.review_note]
+  ].filter(([, v]) => v && v !== '—');
+  elements.detailInsightMetadata.innerHTML = metaRows.length
+    ? `<div class="insight-meta-grid">${metaRows.map(([l, v]) => `<div class="meta-pair"><span>${escapeHtml(l)}</span><strong>${escapeHtml(v)}</strong></div>`).join('')}</div>`
+    : '';
 
   elements.queueJson.textContent = JSON.stringify(item.raw.queue, null, 2);
   elements.approvalJson.textContent = item.raw.approval
@@ -2093,20 +2689,10 @@ function renderQueueDetail(item) {
 
   const contextActions = [];
   const linkedHandoffRecord = getLinkedHandoffRecordForQueueItem(item);
-
   if (linkedHandoffRecord) {
-    contextActions.push({
-      kind: 'nav',
-      label: '查看待自动发布记录',
-      target: `ops:${linkedHandoffRecord.id}`
-    });
-
+    contextActions.push({ kind: 'nav', label: '查看待自动发布记录', target: `ops:${linkedHandoffRecord.id}` });
     if (isHttpUrl(linkedHandoffRecord.primaryPayload && linkedHandoffRecord.primaryPayload.target_url)) {
-      contextActions.push({
-        kind: 'link',
-        label: '打开目标 URL',
-        href: linkedHandoffRecord.primaryPayload.target_url
-      });
+      contextActions.push({ kind: 'link', label: '打开目标 URL', href: linkedHandoffRecord.primaryPayload.target_url });
     }
   }
 
@@ -2117,47 +2703,51 @@ function renderQueueDetail(item) {
 }
 
 function renderThreadDetail(thread) {
-  elements.detailTitle.textContent = '回复任务详情';
-  elements.detailSubtitle.textContent = '这里显示回复任务本身、当前处理状态，以及自动执行需要的步骤。';
+  elements.detailTitle.textContent = thread.reply_id || '回复任务详情';
+  elements.detailSubtitle.textContent = `${thread.platform || ''}${thread.channel_name ? ' · ' + thread.channel_name : ''}`.trim() || '自动回复任务';
   elements.primaryJsonTitle.textContent = '回复任务数据';
   elements.secondaryJsonTitle.textContent = '自动执行步骤';
 
-  const rows = [
-    ['任务 ID', thread.reply_id || '—'],
-    ['当前处理状态', getThreadStateLabel(thread.review_state)],
-    ['运行日期', thread.run_date || '—'],
-    ['创建时间', formatDate(thread.created_at)],
-    ['平台', thread.platform || '—'],
-    ['频道', thread.channel_name || '—'],
-    ['任务分类', thread.classification_bucket || '—'],
-    ['分类评分', formatOpsValue(thread.classification_score)],
-    ['需要人工处理', formatBoolean(thread.manual_required || thread.needs_manual_review)],
-    ['是否敏感', formatBoolean(thread.has_sensitive_content)],
-    ['可交接', formatBoolean(thread.handoff_ready)],
-    ['阻塞原因', thread.blocked_reasons && thread.blocked_reasons.length > 0 ? translateValueList(thread.blocked_reasons).join('，') : '—'],
-    ['人工覆盖', thread.review_override ? '是' : '否'],
-    ['最后动作', translateDisplayValue(thread.review_last_action)],
-    ['处理备注', thread.review_note || '—'],
-    ['处理人', thread.review_updated_by || '—'],
-    ['处理时间', formatDate(thread.review_updated_at)],
-    ['审核单号', thread.approval_ticket || '—'],
-    ['目标 URL', thread.target_url || '—'],
-    ['来源形式', translateDisplayValue(thread.source_kind)],
-    ['草稿预览', thread.draft_preview || '—'],
-    ['任务文件', thread.packet_path || '—'],
-    ['执行步骤文件', thread.job_path || '—']
-  ];
+  // ---- CORE: Draft preview (the actual reply text) ----
+  const hasDraft = !!thread.draft_preview;
+  elements.detailInsightCore.style.display = hasDraft ? '' : 'none';
+  elements.detailInsightCore.innerHTML = hasDraft
+    ? `<div class="insight-label">回复草稿预览</div><p class="insight-body">${escapeHtml(thread.draft_preview)}</p>`
+    : '';
 
-  elements.detailGrid.innerHTML = rows
-    .map(([label, value]) => {
-      return `
-        <div class="detail-row">
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value)}</strong>
-        </div>
-      `;
-    })
-    .join('');
+  // ---- DIAGNOSIS: Why it's blocked / needs human ----
+  const diagLines = [];
+  if (thread.blocked_reasons && thread.blocked_reasons.length > 0) {
+    diagLines.push(`<div class="insight-flag flag-danger">阻塞原因：${escapeHtml(translateValueList(thread.blocked_reasons).join('，'))}</div>`);
+  }
+  if (thread.has_sensitive_content) diagLines.push(`<div class="insight-flag flag-warn">⚠️ 包含敏感内容</div>`);
+  if (thread.manual_required || thread.needs_manual_review) diagLines.push(`<div class="insight-flag flag-warn">需要人工判断</div>`);
+  const bucket = thread.classification_bucket;
+  const score = thread.classification_score;
+  if (bucket) diagLines.push(`<div class="insight-flag flag-info">AI 分类：${escapeHtml(bucket)}${score != null ? ` (评分 ${score})` : ''}</div>`);
+  const stateLabel = getThreadStateLabel(thread.review_state);
+  if (stateLabel) diagLines.push(`<div class="insight-flag flag-info">当前状态：${escapeHtml(stateLabel)}</div>`);
+  const hasDiag = diagLines.length > 0;
+  elements.detailInsightDiagnosis.style.display = hasDiag ? '' : 'none';
+  elements.detailInsightDiagnosis.innerHTML = hasDiag
+    ? `<div class="insight-label">机器诊断</div>${diagLines.join('')}`
+    : '';
+
+  // ---- METADATA ----
+  const metaRows = [
+    ['平台', thread.platform],
+    ['频道', thread.channel_name],
+    ['运行日期', thread.run_date],
+    ['创建时间', formatDate(thread.created_at)],
+    ['来源形式', translateDisplayValue(thread.source_kind)],
+    ['审核单号', thread.approval_ticket],
+    ['处理人', thread.review_updated_by],
+    ['处理时间', formatDate(thread.review_updated_at)],
+    ['处理备注', thread.review_note]
+  ].filter(([, v]) => v && v !== '—');
+  elements.detailInsightMetadata.innerHTML = metaRows.length
+    ? `<div class="insight-meta-grid">${metaRows.map(([l, v]) => `<div class="meta-pair"><span>${escapeHtml(l)}</span><strong>${escapeHtml(v)}</strong></div>`).join('')}</div>`
+    : '';
 
   elements.queueJson.textContent = JSON.stringify(
     thread.raw && thread.raw.packet
@@ -2238,19 +2828,40 @@ function renderThreadDetail(thread) {
 
 function renderOperationsDetail(record) {
   elements.detailTitle.textContent = record.title || '问题记录';
-  elements.detailSubtitle.textContent = record.subtitle || '这里显示这条问题记录的详细上下文。';
+  elements.detailSubtitle.textContent = record.subtitle || '运营异常拦截记录';
   elements.primaryJsonTitle.textContent = record.primaryTitle || '原始问题数据';
   elements.secondaryJsonTitle.textContent = record.secondaryTitle || '来源信息';
-  elements.detailGrid.innerHTML = (record.rows || [])
-    .map(([label, value]) => {
-      return `
-        <div class="detail-row">
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value)}</strong>
-        </div>
-      `;
-    })
-    .join('');
+
+  // ---- CORE: Primary descriptive content ----
+  const primaryRows = (record.rows || []).filter(([l]) => !['当前处理状态','人工覆盖','最后动作','暂缓到','处理备注','处理人','处理时间'].includes(l));
+  const hasCoreRows = primaryRows.length > 0;
+  elements.detailInsightCore.style.display = hasCoreRows ? '' : 'none';
+  elements.detailInsightCore.innerHTML = hasCoreRows
+    ? `<div class="insight-label">记录内容</div><div class="insight-meta-grid">${primaryRows.map(([l, v]) => `<div class="meta-pair"><span>${escapeHtml(l)}</span><strong>${escapeHtml(String(v || '—'))}</strong></div>`).join('')}</div>`
+    : '';
+
+  // ---- DIAGNOSIS: Status/action state ----
+  const diagLines = [];
+  if (record.reviewState) diagLines.push(`<div class="insight-flag flag-info">当前状态：${escapeHtml(getOpsStateLabel(record.reviewState))}</div>`);
+  if (record.reviewLastAction) diagLines.push(`<div class="insight-flag flag-info">最后动作：${escapeHtml(getOpsActionLabel(record.reviewLastAction))}</div>`);
+  if (record.reviewDeferUntil) diagLines.push(`<div class="insight-flag flag-warn">暂缓到：${escapeHtml(formatDate(record.reviewDeferUntil))}</div>`);
+  const hasDiag = diagLines.length > 0;
+  elements.detailInsightDiagnosis.style.display = hasDiag ? '' : 'none';
+  elements.detailInsightDiagnosis.innerHTML = hasDiag
+    ? `<div class="insight-label">处理情况</div>${diagLines.join('')}`
+    : '';
+
+  // ---- METADATA ----
+  const metaRows = [
+    ['处理人', record.reviewUpdatedBy],
+    ['处理时间', formatDate(record.reviewUpdatedAt)],
+    ['处理备注', record.reviewNote],
+    ['人工覆盖', record.reviewOverride ? '是' : null]
+  ].filter(([, v]) => v);
+  elements.detailInsightMetadata.innerHTML = metaRows.length
+    ? `<div class="insight-meta-grid">${metaRows.map(([l, v]) => `<div class="meta-pair"><span>${escapeHtml(l)}</span><strong>${escapeHtml(v)}</strong></div>`).join('')}</div>`
+    : '';
+
   elements.queueJson.textContent = JSON.stringify(record.primaryPayload || {}, null, 2);
   elements.approvalJson.textContent = JSON.stringify(record.secondaryPayload || {}, null, 2);
   const contextActions = [];
@@ -2281,8 +2892,8 @@ function renderOperationsDetail(record) {
   }
 
   renderContextPanel(contextActions);
-  renderActionLogPanel(null);
-  renderActionPanel(null);
+  renderActionLogPanel(record);
+  renderActionPanel(record);
   renderSourcePreview(null);
 }
 
@@ -2315,7 +2926,12 @@ function renderDetail(item, mode = 'queue', emptyMessage = '请选择一条内�
 }
 
 function renderDetailForCurrentMode(queueFallbackMessage, selectedQueueItem = null) {
-  if (state.detailMode === 'thread' && state.activeSection === 'pipeline') {
+  if (state.activeSection === 'overview') {
+    renderDetail(null, 'queue', '概览只看全局分布，请切到收件箱、问题跟进或自动流程再查看详情。');
+    return;
+  }
+
+  if (state.detailMode === 'thread') {
     const selectedThread = getSelectedThread();
     renderDetail(
       selectedThread,
@@ -2325,7 +2941,7 @@ function renderDetailForCurrentMode(queueFallbackMessage, selectedQueueItem = nu
     return;
   }
 
-  if (state.detailMode === 'ops' && state.activeSection === 'operations') {
+  if (state.detailMode === 'ops') {
     const selectedRecord = getSelectedOperationsRecord();
     renderDetail(
       selectedRecord,
@@ -2343,7 +2959,24 @@ function renderDetailForCurrentMode(queueFallbackMessage, selectedQueueItem = nu
 async function runQueueAction(action) {
   const item = getSelectedQueueItem();
 
-  if (!item || state.actionPending || state.batchPending) {
+  if (!item || state.actionPending || state.opsPending) {
+    return;
+  }
+
+  if (action === 'mark_deferred' && !requireDeferUntil(
+    'detail',
+    ({ tone, message }) => {
+      state.actionFeedback = {
+        itemId: item.id,
+        tone,
+        message
+      };
+    },
+    () => renderActionPanel(item),
+    elements.detailActionDeferUntil,
+    'queue',
+    '请先填写暂缓到的时间。'
+  )) {
     return;
   }
 
@@ -2362,6 +2995,9 @@ async function runQueueAction(action) {
     : [];
 
   try {
+    const deferUntilUtc = action === 'mark_deferred'
+      ? readDeferUntilInput(elements.detailActionDeferUntil)
+      : '';
     const response = await fetch(`/api/queue/${encodeURIComponent(item.id)}/action`, {
       method: 'POST',
       headers: {
@@ -2371,7 +3007,8 @@ async function runQueueAction(action) {
         action,
         actor: state.actor,
         note,
-        reasons
+        reasons,
+        defer_until_utc: deferUntilUtc
       })
     });
 
@@ -2387,6 +3024,7 @@ async function runQueueAction(action) {
       throw new Error(payload && payload.error ? payload.error : `提交失败（HTTP ${response.status}）`);
     }
 
+    setFlashMessage(`已完成操作：${translateDisplayValue(action)}`);
     state.actionFeedback = {
       itemId: item.id,
       tone: 'success',
@@ -2414,98 +3052,12 @@ async function runQueueAction(action) {
   }
 }
 
-async function runBatchQueueAction(action) {
-  if (state.batchPending || state.actionPending) {
-    return;
-  }
 
-  const filteredItems = getFilteredItems();
-  const itemIds = getActionableQueueIds(action, filteredItems);
-
-  if (itemIds.length === 0) {
-    state.batchActionFeedback = {
-      tone: 'error',
-      message: '当前筛选结果里没有适合这个动作的内容。'
-    };
-    renderBatchActionPanel();
-    return;
-  }
-
-  const note = elements.batchActionNote.value.trim();
-  const reasons = action === 'mark_missing_info'
-    ? note.split(/[\n,，]/).map((value) => value.trim()).filter(Boolean)
-    : [];
-  const nextSelectionId = getNextQueueSelection(itemIds, state.selectedId);
-
-  state.batchPending = true;
-  state.batchActionFeedback = {
-    tone: 'success',
-    message: `正在批量提交 ${itemIds.length} 条内容…`
-  };
-  renderBatchActionPanel();
-
-  const selectedItem = getSelectedQueueItem();
-  if (selectedItem) {
-    renderActionPanel(selectedItem);
-  }
-
-  try {
-    const response = await fetch('/api/queue/actions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8'
-      },
-      body: JSON.stringify({
-        item_ids: itemIds,
-        action,
-        actor: state.actor,
-        note,
-        reasons
-      })
-    });
-
-    let payload = null;
-
-    try {
-      payload = await response.json();
-    } catch (_error) {
-      payload = null;
-    }
-
-    if (!response.ok) {
-      throw new Error(payload && payload.error ? payload.error : `批量提交失败（HTTP ${response.status}）`);
-    }
-
-    state.batchActionFeedback = {
-      tone: 'success',
-      message: `已批量完成 ${payload && payload.updated_count ? payload.updated_count : itemIds.length} 条：${translateDisplayValue(action)}`
-    };
-    elements.batchActionNote.value = '';
-    await loadData({
-      activeSection: 'queue',
-      detailMode: 'queue',
-      selectedId: nextSelectionId
-    });
-  } catch (error) {
-    state.batchActionFeedback = {
-      tone: 'error',
-      message: error.message || '批量动作提交失败。'
-    };
-    renderBatchActionPanel();
-  } finally {
-    state.batchPending = false;
-    renderBatchActionPanel();
-    const nextSelectedItem = getSelectedQueueItem();
-    if (nextSelectedItem) {
-      renderActionPanel(nextSelectedItem);
-    }
-  }
-}
 
 async function runThreadAction(action) {
   const thread = getSelectedThread();
 
-  if (!thread || state.threadPending || state.actionPending || state.batchPending) {
+  if (!thread || state.threadPending || state.actionPending || state.opsPending) {
     return;
   }
 
@@ -2545,6 +3097,7 @@ async function runThreadAction(action) {
       throw new Error(payload && payload.error ? payload.error : `提交失败（HTTP ${response.status}）`);
     }
 
+    setFlashMessage(`已完成操作：${getThreadActionLabel(action)}`);
     state.threadActionFeedback = {
       replyId: thread.reply_id,
       tone: 'success',
@@ -2572,6 +3125,107 @@ async function runThreadAction(action) {
   }
 }
 
+async function runOpsAction(action) {
+  const record = getSelectedOperationsRecord();
+
+  if (!record || state.opsPending || state.actionPending || state.threadPending) {
+    return;
+  }
+
+  if (!record.actionId) {
+    state.opsActionFeedback = {
+      recordId: record.id,
+      tone: 'error',
+      message: '当前记录缺少稳定 ID，暂时无法提交动作。'
+    };
+    renderActionPanel(record);
+    return;
+  }
+
+  const note = elements.detailActionNote.value.trim();
+
+  if (action === 'mark_defer' && !requireDeferUntil(
+    'detail',
+    ({ tone, message }) => {
+      state.opsActionFeedback = {
+        recordId: record.id,
+        tone,
+        message
+      };
+    },
+    () => renderActionPanel(record),
+    elements.detailActionDeferUntil,
+    'ops',
+    '请先填写问题记录的暂缓时间。'
+  )) {
+    return;
+  }
+
+  state.opsPending = true;
+  state.opsActionFeedback = {
+    recordId: record.id,
+    tone: 'success',
+    message: '正在提交问题记录动作…'
+  };
+  renderActionPanel(record);
+
+  try {
+    const deferUntilUtc = action === 'mark_defer'
+      ? readDeferUntilInput(elements.detailActionDeferUntil)
+      : '';
+    const response = await fetch(`/api/ops/${encodeURIComponent(record.actionId)}/action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8'
+      },
+      body: JSON.stringify({
+        action,
+        actor: state.actor,
+        note,
+        defer_until_utc: deferUntilUtc
+      })
+    });
+
+    let payload = null;
+
+    try {
+      payload = await response.json();
+    } catch (_error) {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      throw new Error(payload && payload.error ? payload.error : `提交失败（HTTP ${response.status}）`);
+    }
+
+    setFlashMessage(`已完成操作：${getOpsActionLabel(action)}`);
+    state.opsActionFeedback = {
+      recordId: record.id,
+      tone: 'success',
+      message: `已完成操作：${getOpsActionLabel(action)}`
+    };
+    elements.detailActionNote.value = '';
+    await loadData({
+      activeSection: 'operations',
+      detailMode: 'ops',
+      selectedOpsRecordId: record.id
+    });
+  } catch (error) {
+    state.opsActionFeedback = {
+      recordId: record.id,
+      tone: 'error',
+      message: error.message || '问题记录动作提交失败。'
+    };
+    renderActionPanel(record);
+  } finally {
+    state.opsPending = false;
+    const selectedRecord = getSelectedOperationsRecord();
+    if (selectedRecord) {
+      renderActionPanel(selectedRecord);
+    }
+  }
+}
+
 function syncFiltersFromInputs() {
   if (!state.data) {
     return;
@@ -2579,6 +3233,7 @@ function syncFiltersFromInputs() {
 
   state.filters.project = elements.projectFilter.value;
   state.filters.status = elements.statusFilter.value;
+  state.filters.action_state = elements.actionStateFilter.value;
   state.filters.platform = elements.platformFilter.value;
   state.filters.risk = elements.riskFilter.value;
   state.filters.search = elements.searchInput.value;
@@ -2602,6 +3257,15 @@ function syncThreadInboxFilter() {
     state.detailMode = 'thread';
     renderDetailForCurrentMode('当前还没有可用的回复任务。');
   }
+}
+
+function syncProcessingLaneFilter() {
+  if (!state.data) {
+    return;
+  }
+
+  state.processingLaneFilter = elements.processingLaneFilter.value;
+  renderProcessingLane();
 }
 
 async function loadData(options = {}) {
@@ -2654,50 +3318,42 @@ async function loadData(options = {}) {
     renderFilters();
     renderList();
 
-    elements.statusBanner.textContent = [
+    const baseStatus = [
       `审核更新时间 ${formatDate(state.data.metadata.approval_updated_at)}`,
       `内容日期 ${state.data.metadata.queue_run_date || '—'}`,
       `自动执行 ${state.data.ops_snapshot && state.data.ops_snapshot.latest_run_date ? state.data.ops_snapshot.latest_run_date : '—'}`,
       `生成时间 ${formatDate(state.data.generated_at)}`
     ].join(' · ');
+    elements.statusBanner.textContent = baseStatus;
+    renderFlashBanner();
   } catch (error) {
     state.data = null;
+    clearFlashBanner();
     state.detailMode = 'queue';
     state.selectedId = null;
     state.selectedThreadId = null;
     state.selectedOpsRecordId = null;
     state.actionPending = false;
     state.threadPending = false;
+    state.opsPending = false;
     elements.summaryCards.innerHTML = '';
     elements.workspaceHighlights.innerHTML = '';
-    elements.reviewLedgerMeta.textContent = '';
-    elements.experimentMeta.textContent = '';
-    elements.feedbackMeta.textContent = '';
-    elements.handoffMeta.textContent = '';
-    elements.runHealthMeta.textContent = '';
-    elements.executionSnapshotMeta.textContent = '';
-    elements.bossThreadsMeta.textContent = '';
+    elements.operationsUnifiedMeta.textContent = '';
+    elements.pipelineUnifiedMeta.textContent = '';
     elements.threadInboxFilter.disabled = true;
-    elements.reviewLedgerList.innerHTML = '<div class="empty-state">问题记录数据暂时不可用。</div>';
-    elements.experimentList.innerHTML = '<div class="empty-state">问题记录数据暂时不可用。</div>';
-    elements.feedbackSummary.innerHTML = '<div class="empty-state">问题记录数据暂时不可用。</div>';
-    elements.handoffList.innerHTML = '<div class="empty-state">问题记录数据暂时不可用。</div>';
-    elements.runHealthSummary.innerHTML = '<div class="empty-state">自动执行数据暂时不可用。</div>';
-    elements.executionSnapshotSummary.innerHTML = '<div class="empty-state">自动执行数据暂时不可用。</div>';
-    elements.bossThreadsSummary.innerHTML = '<div class="empty-state">自动执行数据暂时不可用。</div>';
+    elements.operationsUnifiedList.innerHTML = '<div class="empty-state">问题记录数据暂时不可用。</div>';
+    elements.pipelineUnifiedList.innerHTML = '<div class="empty-state">自动执行数据暂时不可用。</div>';
     elements.itemList.innerHTML = createLoadErrorMarkup(normalizeLoadError(error));
     elements.listMeta.textContent = '数据源诊断';
     elements.resultCount.textContent = '0 / 0';
-    elements.batchActionPanel.hidden = true;
-    elements.batchActionBar.innerHTML = '';
-    elements.batchActionStatus.textContent = '';
-    elements.batchActionSummary.textContent = '';
     elements.needsReviewCount.textContent = '0';
     elements.readyToExecuteCount.textContent = '0';
     elements.needsInfoCount.textContent = '0';
+    elements.deferredCount.textContent = '0';
     elements.needsReviewList.innerHTML = '<div class="empty-state">看板数据暂时不可用。</div>';
     elements.readyToExecuteList.innerHTML = '<div class="empty-state">看板数据暂时不可用。</div>';
     elements.needsInfoList.innerHTML = '<div class="empty-state">看板数据暂时不可用。</div>';
+    elements.deferredList.innerHTML = '<div class="empty-state">看板数据暂时不可用。</div>';
     elements.detailEmpty.hidden = false;
     elements.detailView.hidden = true;
     elements.detailActionPanel.hidden = true;
@@ -2712,16 +3368,16 @@ syncActorInputs();
 elements.detailActionActor.addEventListener('input', () => {
   setActorValue(elements.detailActionActor.value);
 });
-elements.batchActionActor.addEventListener('input', () => {
-  setActorValue(elements.batchActionActor.value);
-});
 elements.projectFilter.addEventListener('change', syncFiltersFromInputs);
 elements.statusFilter.addEventListener('change', syncFiltersFromInputs);
+elements.actionStateFilter.addEventListener('change', syncFiltersFromInputs);
 elements.platformFilter.addEventListener('change', syncFiltersFromInputs);
 elements.riskFilter.addEventListener('change', syncFiltersFromInputs);
 elements.searchInput.addEventListener('input', syncFiltersFromInputs);
+
 elements.threadInboxFilter.addEventListener('change', syncThreadInboxFilter);
 elements.refreshButton.addEventListener('click', loadData);
+elements.filterResetButton.addEventListener('click', handleFilterReset);
 
 attachWorkspaceNavigation();
 renderWorkspaceSections();

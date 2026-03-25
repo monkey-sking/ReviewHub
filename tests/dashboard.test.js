@@ -457,3 +457,248 @@ test('dashboard extracts source preview artifacts and recent activity summary', 
     }
   );
 });
+
+test('dashboard exposes a daily processing lane and high-signal stream from live artifacts', () => {
+  withFixtureData(
+    {
+      schema_version: 'test',
+      updated_at_utc: '2026-03-24T00:00:00.000Z',
+      entries: []
+    },
+    {
+      schema_version: 'test',
+      run_date: '2026-03-24',
+      items: [
+        {
+          item_id: 'queue-daily-001',
+          status: 'queued',
+          platform: 'Other',
+          title: 'B站深度评测脚本',
+          owner: 'ops',
+          source: 'Content/Promotional/huasheng_script_deep_dive.md',
+          notes: '需要补发布入口',
+          risk: 'review'
+        }
+      ],
+      status_counts: {
+        queued: 1
+      }
+    },
+    ({ loadDashboardData }) => {
+      const stateDir = path.join(process.env.REVIEWHUB_OPERATIONS_ROOT, 'Ops', 'state');
+      const threadActionLogPath = path.join(stateDir, 'reviewhub_thread_action_log.ndjson');
+      const sourcePath = path.join(process.env.REVIEWHUB_OPERATIONS_ROOT, 'Content', 'Promotional', 'huasheng_script_deep_dive.md');
+      const postsDir = path.join(process.env.OPS_RUNS_DIR, '2026-03-24', 'posts');
+      const feedbackDir = path.join(process.env.OPS_RUNS_DIR, '2026-03-24', 'feedback');
+      const repliesDir = path.join(process.env.OPS_RUNS_DIR, '2026-03-25', 'replies', 'reply-daily-001');
+
+      fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.mkdirSync(postsDir, { recursive: true });
+      fs.mkdirSync(feedbackDir, { recursive: true });
+      fs.mkdirSync(repliesDir, { recursive: true });
+
+      fs.writeFileSync(sourcePath, '# B站脚本\n\n首发版本。', 'utf8');
+      fs.writeFileSync(
+        process.env.REVIEW_INDEX_PATH,
+        [
+          '# Review Index',
+          '',
+          'Date: 2026-03-24',
+          '',
+          '| Date (YYYY-MM-DD) | Job | Focus | Status | Blocker/Notes | Follow-up owner |',
+          '| ----------------- | --- | ----- | ------ | ------------- | --------------- |',
+          '| 2026-03-24 | launch_review | 发布节奏 | watch | 等确认渠道顺序 | ops-lead |'
+        ].join('\n'),
+        'utf8'
+      );
+      fs.writeFileSync(
+        path.join(postsDir, 'browser_post_queue_summary.json'),
+        JSON.stringify({
+          run_date: '2026-03-24',
+          total_items: 1,
+          ready_count: 0,
+          blocked_count: 1,
+          records: [
+            {
+              item_id: 'post-huasheng-script-deep-dive-run',
+              platform: 'Other',
+              source: 'Content/Promotional/huasheng_script_deep_dive.md',
+              queue_status: 'queued',
+              target_url: '',
+              status: 'needs_target_url',
+              blocked_reasons: ['missing target_url'],
+              job_path: 'Ops/runs/2026-03-24/posts/Aion_B/browser_post_job.json'
+            }
+          ]
+        }, null, 2),
+        'utf8'
+      );
+      fs.writeFileSync(
+        path.join(feedbackDir, 'lobster_feedback_report_2026-03-24.md'),
+        [
+          '# Lobster feedback + failure report',
+          '',
+          '- Generated at (UTC): **2026-03-24T10:30:35.971698Z**',
+          '',
+          '## Summary',
+          '- Total incidents captured: **10**',
+          '- Session runtime errors: **2**',
+          '- Gateway errors/warnings: **3**',
+          '- User feedback signals: **5**',
+          '',
+          '## Recent incident timeline',
+          '| Time (UTC) | Kind | Session | Source | Summary |',
+          '| --- | --- | --- | --- | --- |',
+          '| 2026-03-24T10:30:00.254000Z | `gateway_error` | `-` | `gateway.err.log` | token missing |'
+        ].join('\n'),
+        'utf8'
+      );
+      fs.writeFileSync(
+        process.env.REVIEWHUB_ACTION_LOG_PATH,
+        JSON.stringify({
+          timestamp_utc: '2026-03-24T11:00:00.000Z',
+          actor: '@tester',
+          item_id: 'queue-daily-001',
+          action: 'mark_ready',
+          note: '已补齐素材'
+        }) + '\n',
+        'utf8'
+      );
+      fs.writeFileSync(threadActionLogPath, '', 'utf8');
+      fs.writeFileSync(
+        path.join(repliesDir, 'packet.json'),
+        JSON.stringify({
+          packet_version: '1.0',
+          reply_id: 'reply-daily-001',
+          run_date: '2026-03-25',
+          created_at_utc: '2026-03-25T08:00:00.000Z',
+          execution_context: {
+            platform: 'reddit',
+            target_url: 'https://example.com/reply'
+          },
+          input: {
+            source_kind: 'feedback'
+          },
+          classification: {
+            bucket: 'B',
+            score: 8,
+            manual_required: true
+          },
+          reply: {
+            needs_manual_review: true,
+            draft_text: '需要人工决定怎么回。'
+          }
+        }, null, 2),
+        'utf8'
+      );
+      fs.writeFileSync(
+        path.join(repliesDir, 'browser_reply_job.json'),
+        JSON.stringify({
+          reply_id: 'reply-daily-001',
+          gates: {
+            blocked_reasons: []
+          },
+          handoff: {
+            ready_for_human_checkpoint: true
+          }
+        }, null, 2),
+        'utf8'
+      );
+
+      const dashboard = loadDashboardData();
+      assert.ok(dashboard.daily_processing_queue.total_entries >= 3);
+      assert.ok(
+        dashboard.daily_processing_queue.entries.some((entry) => {
+          return entry.source_kind === 'queue' && entry.handoff_status === 'needs_target_url';
+        })
+      );
+      assert.ok(
+        dashboard.daily_processing_queue.entries.some((entry) => {
+          return entry.source_kind === 'thread' && entry.navigation.kind === 'thread';
+        })
+      );
+      assert.ok(
+        dashboard.daily_processing_queue.entries.some((entry) => {
+          return entry.source_kind === 'review' && entry.navigation.kind === 'ops';
+        })
+      );
+      assert.ok(
+        dashboard.signal_stream.entries.some((entry) => {
+          return entry.signal_kind === 'queue_action' && entry.navigation.kind === 'queue';
+        })
+      );
+      assert.ok(
+        dashboard.signal_stream.entries.some((entry) => {
+          return entry.signal_kind === 'feedback_incident' && entry.severity === 'critical';
+        })
+      );
+    }
+  );
+});
+
+test('daily processing queue returns every entry instead of the 24-item truncation', () => {
+  const queueItems = Array.from({ length: 30 }, (_, index) => ({
+    item_id: `queue-full-${index + 1}`,
+    status: 'queued',
+    platform: 'Batch',
+    title: `Batch entry ${index + 1}`,
+    owner: 'ops',
+    source: `Content/Batch/batch-${index + 1}.md`,
+    risk: 'review',
+    notes: '-'
+  }));
+
+  withFixtureData(
+    {
+      schema_version: 'test',
+      updated_at_utc: '2026-03-24T00:00:00.000Z',
+      entries: []
+    },
+    {
+      schema_version: 'test',
+      run_date: '2026-03-24',
+      items: queueItems,
+      status_counts: {
+        queued: queueItems.length
+      }
+    },
+    ({ loadDashboardData }) => {
+      const dashboard = loadDashboardData();
+      const laneEntries = dashboard.daily_processing_queue.entries.filter((entry) => entry.source_kind === 'queue');
+      assert.equal(laneEntries.length, queueItems.length);
+      assert.ok(laneEntries.some((entry) => entry.id === 'queue:queue-full-1'));
+    }
+  );
+});
+
+test('recent activity total_entries reflects entire log', () => {
+  withFixtureData(
+    {
+      schema_version: 'test',
+      updated_at_utc: '2026-03-24T00:00:00.000Z',
+      entries: []
+    },
+    {
+      schema_version: 'test',
+      run_date: '2026-03-24',
+      items: [],
+      status_counts: {}
+    },
+    ({ loadDashboardData }) => {
+      const actionLogPath = process.env.REVIEWHUB_ACTION_LOG_PATH;
+      const serialized = Array.from({ length: 22 }, (_item, index) => JSON.stringify({
+        timestamp_utc: `2026-03-24T${String(10 + index).padStart(2, '0')}:00:00.000Z`,
+        actor: '@tester',
+        item_id: `queue-${index}`,
+        action: 'mark_ready',
+        note: 'note'
+      }));
+      fs.writeFileSync(actionLogPath, serialized.join('\n'), 'utf8');
+
+      const dashboard = loadDashboardData();
+      assert.equal(dashboard.recent_activity.total_entries, 22);
+      assert.ok(dashboard.recent_activity.entries.length <= 16);
+    }
+  );
+});

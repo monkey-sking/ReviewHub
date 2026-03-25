@@ -242,3 +242,152 @@ test('batch missing-info action updates multiple items and writes one audit line
     }
   );
 });
+
+test('approve action rejects when queue item already queued', () => {
+  withActionFixtures(
+    {
+      schema_version: 'test',
+      updated_at_utc: '2026-03-24T00:00:00.000Z',
+      entries: [
+        {
+          entry_id: 'approval-001',
+          status: 'pending',
+          source: 'Content/Marketing/post.md',
+          platform: 'Product Hunt',
+          reason: 'Needs explicit approval',
+          approval_ticket: 'TICKET-001',
+          requested_by: 'ops',
+          requested_at_utc: '2026-03-24T00:00:00.000Z'
+        }
+      ]
+    },
+    {
+      schema_version: 'test',
+      run_date: '2026-03-24',
+      items: [
+        {
+          item_id: 'queue-approve-002',
+          status: 'queued',
+          platform: 'Product Hunt',
+          title: 'Already queued item',
+          owner: 'ops',
+          source: 'Content/Marketing/post.md',
+          risk: 'manual_review',
+          notes: 'approval_status=pending'
+        }
+      ],
+      status_counts: {
+        queued: 1
+      }
+    },
+    ({ queueActionsModule }) => {
+      assert.throws(() => {
+        queueActionsModule.applyQueueAction({
+          itemId: 'queue-approve-002',
+          action: 'approve',
+          actor: '@tester',
+          note: 'should fail'
+        });
+      }, /该动作只能用于审核待定/);
+    }
+  );
+});
+
+test('mark_missing_info does not rewrite approval metadata', () => {
+  withActionFixtures(
+    {
+      schema_version: 'test',
+      updated_at_utc: '2026-03-24T00:00:00.000Z',
+      entries: []
+    },
+    {
+      schema_version: 'test',
+      run_date: '2026-03-24',
+      items: [
+        {
+          item_id: 'queue-no-appr-001',
+          status: 'queued',
+          platform: 'Product Hunt',
+          title: 'Reviewed item',
+          owner: 'ops',
+          source: 'Content/Marketing/post.md',
+          risk: 'review',
+          notes: '-'
+        }
+      ],
+      status_counts: {
+        queued: 1
+      }
+    },
+    ({ queuePath, approvalPath, queueActionsModule }) => {
+      queueActionsModule.applyQueueAction({
+        itemId: 'queue-no-appr-001',
+        action: 'mark_missing_info',
+        actor: '@tester',
+        note: 'missing info'
+      });
+
+      const approvalData = JSON.parse(fs.readFileSync(approvalPath, 'utf8'));
+      assert.equal(approvalData.updated_at_utc, '2026-03-24T00:00:00.000Z');
+      const queueData = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+      assert.equal(queueData.items[0].reviewhub.manual_action_state, 'missing_info');
+    }
+  );
+});
+
+test('defer action stores defer_until and changes dashboard state to deferred', () => {
+  withActionFixtures(
+    {
+      schema_version: 'test',
+      updated_at_utc: '2026-03-24T00:00:00.000Z',
+      entries: []
+    },
+    {
+      schema_version: 'test',
+      run_date: '2026-03-24',
+      items: [
+        {
+          item_id: 'queue-defer-001',
+          status: 'queued',
+          platform: 'Other',
+          title: 'Queued item to defer',
+          owner: 'ops',
+          source: 'Content/Marketing/post.md',
+          risk: 'review',
+          notes: '-'
+        }
+      ],
+      status_counts: {
+        queued: 1
+      }
+    },
+    ({ dashboardModule, queueActionsModule, queuePath, actionLogPath }) => {
+      const deferUntilUtc = '2026-03-28T04:00:00.000Z';
+      const result = queueActionsModule.applyQueueAction({
+        itemId: 'queue-defer-001',
+        action: 'mark_deferred',
+        actor: '@tester',
+        note: '等新素材',
+        deferUntilUtc
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.item.action_state, 'deferred');
+      assert.equal(result.item.review_defer_until, deferUntilUtc);
+
+      const dashboard = dashboardModule.loadDashboardData();
+      assert.equal(dashboard.summary.deferred_count, 1);
+      assert.equal(dashboard.items[0].action_state, 'deferred');
+      assert.equal(dashboard.items[0].review_defer_until, deferUntilUtc);
+      assert.equal(
+        dashboard.daily_processing_queue.entries.some((entry) => entry.id === 'queue:queue-defer-001'),
+        false
+      );
+
+      const queueData = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+      assert.equal(queueData.items[0].reviewhub.manual_action_state, 'deferred');
+      assert.equal(queueData.items[0].reviewhub.defer_until_utc, deferUntilUtc);
+      assert.match(fs.readFileSync(actionLogPath, 'utf8'), /"defer_until_utc":"2026-03-28T04:00:00.000Z"/);
+    }
+  );
+});

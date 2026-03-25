@@ -1,6 +1,6 @@
 # Upstream JSON Schemas
 
-Last updated: 2026-03-24
+Last updated: 2026-03-25
 
 This document defines the expected shape for the two upstream files used by ReviewHub:
 
@@ -102,6 +102,7 @@ Fields currently consumed:
 - `generated_count`, `existing_count`
 - `errors` (array)
 - `records[]` with `item_id`, `platform`, `queue_status`, `status`, `target_url`, `blocked_reasons`, `source`
+- optional passthrough fields when present: `job_path`, `execution_job_path`, `runbook_path`
 
 ### `replies/browser_reply_queue_summary.json`
 
@@ -155,3 +156,10 @@ Markdown lines currently consumed:
 - `## Suggested operator actions`
 - `## Recent incident timeline`
 - `## User feedback highlights`
+
+## 6) Derived ReviewHub lanes
+
+These are not upstream files, but they are now derived from the sources above:
+
+- `日报待处理` joins queue items with latest post-handoff status by `source`, then mixes in reply packets and follow-up review rows.
+- `重要变化` combines local queue/thread audit logs with `feedback/lobster_feedback_report_<date>.md` recent incidents.
