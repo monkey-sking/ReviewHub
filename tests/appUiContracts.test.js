@@ -31,6 +31,15 @@ test('queue is the default active section and workboard is no longer a primary n
   assert.match(source, /section:\s*'queue',\s*title:\s*'Inbox'/);
 });
 
+test('queue rows use a scan-first two-line structure', () => {
+  const source = readAppSource();
+
+  assert.match(source, /item-row-title/);
+  assert.match(source, /item-row-headline/);
+  assert.match(source, /item-row-subline/);
+  assert.match(source, /这一组现在没有需要你处理的内容/);
+});
+
 test('queue is the default active section and workboard is no longer a primary nav card', () => {
   const source = readAppSource();
 

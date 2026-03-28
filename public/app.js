@@ -3060,7 +3060,7 @@ function renderList() {
   }
 
   if (filteredItems.length === 0) {
-    elements.itemList.innerHTML = '<div class="empty-state">当前筛选条件下没有匹配项目。</div>';
+    elements.itemList.innerHTML = '<div class="empty-state">这一组现在没有需要你处理的内容</div>';
     renderDetailForCurrentMode('当前筛选条件下没有匹配项目。');
     renderOpsSnapshot();
     return;
@@ -3070,26 +3070,16 @@ function renderList() {
   elements.itemList.innerHTML = filteredItems
     .map((item) => {
       const selectedClass = state.detailMode === 'queue' && item.id === state.selectedId ? ' item-row-selected' : '';
-      const approvalTag = item.approval_match ? '<span class="tag tag-muted">已匹配审核</span>' : '';
-      const normalizedProject = cleanClientValue(item.project);
-      const normalizedPlatform = cleanClientValue(item.platform);
-      const shouldShowProjectTag = normalizedProject && normalizedProject !== normalizedPlatform && normalizedProject !== 'ReviewHub';
-      const projectTag = shouldShowProjectTag ? `<span class="tag tag-muted">${escapeHtml(item.project)}</span>` : '';
 
       return `
         <button class="item-row${selectedClass}" data-item-id="${escapeHtml(item.id)}" data-item-source="list" type="button">
-          <div class="item-row-top" style="display: block; margin-bottom: 8px;">
-            <strong style="display: block; font-size: 14px; margin-bottom: 6px;">${escapeHtml(item.title)}</strong>
-            <div class="tag-group">
-              <span class="tag tag-status">${escapeHtml(getQueueStageLabel(item))}</span>
-              <span class="tag tag-muted">${escapeHtml(getQueueItemTypeLabel(item))}</span>
-              ${projectTag}
-              <span class="tag tag-muted">${escapeHtml(item.platform || '未知平台')}</span>
-              ${approvalTag}
-            </div>
+          <div class="item-row-line1">
+            <strong class="item-row-title">${escapeHtml(item.title || '未命名任务')}</strong>
+            <span class="item-row-state">${escapeHtml(getQueueStageLabel(item))}</span>
           </div>
-          <div class="item-row-meta">
-            <span style="color: #64748b; line-height: 1.4;">${escapeHtml(getQueueListNote(item))}</span>
+          <div class="item-row-line2">
+            <span class="item-row-headline">${escapeHtml(item.platform || '未知平台')}</span>
+            <span class="item-row-subline">${escapeHtml(getQueueListNote(item) || '打开后查看处理建议')}</span>
           </div>
         </button>
       `;
