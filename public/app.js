@@ -32,6 +32,9 @@ const state = {
   selectedId: null,
   selectedThreadId: null,
   selectedOpsRecordId: null,
+  selectedProjectName: '',
+  selectedProjectTaskId: '',
+  selectedProjectMaterialId: '',
   laneSelectionId: null,
   actionFeedback: null,
   threadActionFeedback: null,
@@ -40,11 +43,14 @@ const state = {
   actionPending: false,
   threadPending: false,
   opsPending: false,
+  projectPending: false,
   detailDeferMode: '',
-  processingLaneFilter: 'all',
   threadInboxFilter: 'needs_reply',
   actor: readStoredActor(),
-  inboxTab: 'pending'
+  inboxTab: 'ready',
+  projectView: 'progress',
+  projectActionFeedback: null,
+  detailModalOpen: false
 };
 
 const UI_LOCALE = 'zh-CN';
@@ -163,6 +169,14 @@ const MISSING_INFO_LABELS = {
   owner: '负责人'
 };
 
+const PROJECT_SECTION_LABELS = {
+  inbox: '待梳理',
+  ready: '可推进',
+  running: '推进中',
+  waiting: '被阻塞',
+  done: '已完成'
+};
+
 const elements = {
   actionLogList: document.getElementById('actionLogList'),
   actionLogMeta: document.getElementById('actionLogMeta'),
@@ -174,12 +188,17 @@ const elements = {
   detailActionDeferUntil: document.getElementById('detailActionDeferUntil'),
   detailActionPanel: document.getElementById('detailActionPanel'),
   detailActionStatus: document.getElementById('detailActionStatus'),
+  detailCloseButton: document.getElementById('detailCloseButton'),
   detailContextBar: document.getElementById('detailContextBar'),
   detailContextPanel: document.getElementById('detailContextPanel'),
   detailEmpty: document.getElementById('detailEmpty'),
   detailInsightCore: document.getElementById('detailInsightCore'),
   detailInsightDiagnosis: document.getElementById('detailInsightDiagnosis'),
   detailInsightMetadata: document.getElementById('detailInsightMetadata'),
+  detailModal: document.getElementById('detailModal'),
+  detailModalBackdrop: document.getElementById('detailModalBackdrop'),
+  detailProjectEditor: document.getElementById('detailProjectEditor'),
+  detailProjectEditorMeta: document.getElementById('detailProjectEditorMeta'),
   detailSubtitle: document.getElementById('detailSubtitle'),
   detailTitle: document.getElementById('detailTitle'),
   detailView: document.getElementById('detailView'),
@@ -192,10 +211,16 @@ const elements = {
   needsReviewCount: document.getElementById('needsReviewCount'),
   needsReviewList: document.getElementById('needsReviewList'),
   queueJson: document.getElementById('queueJson'),
+  projectCurrentStep: document.getElementById('projectCurrentStep'),
+  projectTaskType: document.getElementById('projectTaskType'),
+  projectNextStep: document.getElementById('projectNextStep'),
+  projectBlocker: document.getElementById('projectBlocker'),
+  projectNotes: document.getElementById('projectNotes'),
+  projectCanonicalLink: document.getElementById('projectCanonicalLink'),
+  projectOutput: document.getElementById('projectOutput'),
+  projectSaveButton: document.getElementById('projectSaveButton'),
   readyToExecuteCount: document.getElementById('readyToExecuteCount'),
   readyToExecuteList: document.getElementById('readyToExecuteList'),
-  recentActivityList: document.getElementById('recentActivityList'),
-  recentActivityMeta: document.getElementById('recentActivityMeta'),
   refreshButton: document.getElementById('refreshButton'),
   resultCount: document.getElementById('resultCount'),
   primaryJsonTitle: document.getElementById('primaryJsonTitle'),
@@ -218,8 +243,56 @@ const elements = {
   threadInboxFilter: document.getElementById('threadInboxFilter'),
   platformFilter: document.getElementById('platformFilter'),
   workspaceHighlights: document.getElementById('workspaceHighlights'),
+  workboardBoard: document.getElementById('workboardBoard'),
+  workboardMeta: document.getElementById('workboardMeta'),
+  projectBoardSummary: document.getElementById('projectBoardSummary'),
+  projectBoardList: document.getElementById('projectBoardList'),
+  projectBoardMeta: document.getElementById('projectBoardMeta'),
+  projectRailMeta: document.getElementById('projectRailMeta'),
+  projectHubTitle: document.getElementById('projectHubTitle'),
+  projectHubSubtitle: document.getElementById('projectHubSubtitle'),
+  heroKicker: document.getElementById('heroKicker'),
+  heroTitle: document.getElementById('heroTitle'),
+  heroSubtitle: document.getElementById('heroSubtitle'),
+  heroMetrics: document.getElementById('heroMetrics'),
+  projectSpotlight: document.getElementById('projectSpotlight'),
   filterResetButton: document.getElementById('filterResetButton')
 };
+
+function isModalDetailMode(mode = state.detailMode) {
+  return ['queue', 'thread', 'ops', 'project_task', 'project_material'].includes(mode);
+}
+
+function usesInlineInspector() {
+  return window.matchMedia('(min-width: 1180px)').matches;
+}
+
+function syncDetailModal() {
+  if (!elements.detailModal) {
+    return;
+  }
+
+  const inlineInspector = usesInlineInspector();
+  const shouldShow = Boolean((inlineInspector || (state.detailModalOpen && isModalDetailMode())) && state.data);
+  elements.detailModal.hidden = !shouldShow;
+  elements.detailModal.setAttribute('aria-hidden', String(!shouldShow));
+  elements.detailModal.classList.toggle('detail-modal-inline', inlineInspector);
+  document.body.classList.toggle('detail-modal-open', shouldShow && !inlineInspector);
+}
+
+function openDetailModal() {
+  if (!isModalDetailMode()) {
+    return;
+  }
+
+  state.detailModalOpen = true;
+  syncDetailModal();
+}
+
+function closeDetailModal() {
+  state.detailModalOpen = false;
+  syncDetailModal();
+}
 
 function matchesInboxTab(item) {
   if (!item) {
@@ -229,12 +302,13 @@ function matchesInboxTab(item) {
   const inboxTab = state.inboxTab || 'pending';
   const actionState = cleanClientValue(item.action_state);
   const status = cleanClientValue(item.status);
+  const hasManualDecision = ['ready_to_execute', 'missing_info', 'deferred'].includes(actionState);
 
   switch (inboxTab) {
     case 'pending':
-      return status === 'approval_pending';
+      return status === 'approval_pending' && !hasManualDecision;
     case 'ready':
-      return actionState === 'ready_to_execute' || status === 'queued';
+      return actionState === 'ready_to_execute';
     case 'missing_info':
       return actionState === 'missing_info';
     case 'deferred':
@@ -256,21 +330,19 @@ function renderInboxTabs() {
 }
 
 function getInboxTabCount(tabId) {
-  const summary = state.data && state.data.summary ? state.data.summary : {};
+  const items = state.data && Array.isArray(state.data.items) ? state.data.items : [];
 
-  switch (tabId) {
-    case 'pending':
-      return summary.approval_pending_items || 0;
-    case 'ready':
-      return summary.ready_to_execute_count || 0;
-    case 'missing_info':
-      return summary.missing_info_count || 0;
-    case 'deferred':
-      return summary.deferred_count || 0;
-    case 'all':
-    default:
-      return summary.total_items || 0;
+  if (tabId === 'all') {
+    return items.length;
   }
+
+  return items.filter((item) => {
+    const previousTab = state.inboxTab;
+    state.inboxTab = tabId;
+    const matched = matchesInboxTab(item);
+    state.inboxTab = previousTab;
+    return matched;
+  }).length;
 }
 
 function renderInboxTabBar() {
@@ -415,309 +487,6 @@ function renderSourcePreview(sourceDetails) {
       `;
     }).join('');
   elements.sourcePreview.textContent = sourceDetails.preview || '源文件暂时不可读。';
-}
-
-function renderRecentActivity() {
-  if (!elements.recentActivityList) return; // DOM removed in unified layout
-  if (!state.data || !state.data.recent_activity) {
-    elements.recentActivityMeta.textContent = '';
-    elements.recentActivityList.innerHTML = '<div class="empty-state">暂时没有最近动作。</div>';
-    return;
-  }
-
-  const activity = state.data.recent_activity;
-  elements.recentActivityMeta.textContent = `${activity.total_entries || 0} 条`;
-  const entries = Array.isArray(activity.entries) ? activity.entries : [];
-  elements.recentActivityList.innerHTML = entries.length === 0
-    ? '<div class="empty-state">暂时没有最近动作。</div>'
-    : entries.map((entry) => {
-      const targetLabel = entry.kind === 'thread'
-        ? (entry.target_id || '未知回复')
-        : entry.kind === 'ops'
-          ? (entry.record_title || entry.target_id || '未知记录')
-          : (entry.target_id || '未知内容');
-      const targetButton = entry.kind === 'thread'
-        ? `<button class="button button-link" type="button" data-jump-thread-id="${escapeHtml(entry.target_id || '')}">查看回复</button>`
-        : entry.kind === 'ops'
-          ? `<button class="button button-link" type="button" data-jump-ops-id="${escapeHtml(entry.target_id || '')}">查看记录</button>`
-          : `<button class="button button-link" type="button" data-jump-item-id="${escapeHtml(entry.target_id || '')}">查看内容</button>`;
-      const noteParts = [entry.note];
-      if (entry.kind === 'queue' && entry.reasons && entry.reasons.length > 0) {
-        noteParts.push(`原因：${translateMissingInfoList(entry.reasons).join('，')}`);
-      }
-      if (entry.kind === 'thread' && entry.manual_state) {
-        noteParts.push(`状态：${getThreadStateLabel(entry.manual_state)}`);
-      }
-      if (entry.kind === 'ops' && entry.manual_state) {
-        noteParts.push(`状态：${getOpsStateLabel(entry.manual_state)}`);
-      }
-      return `
-        <article class="ops-item">
-          <div class="ops-item-top">
-            <strong>${escapeHtml(translateDisplayValue(entry.action || 'unknown'))}</strong>
-            <div class="tag-group">
-              <span class="tag tag-muted">${escapeHtml(entry.kind === 'thread' ? '回复' : entry.kind === 'ops' ? '问题记录' : '队列')}</span>
-              <span class="tag tag-muted">${escapeHtml(entry.actor || '—')}</span>
-            </div>
-          </div>
-          <span class="ops-item-meta">${escapeHtml(formatDate(entry.timestamp_utc))} · ${escapeHtml(targetLabel)}</span>
-          <span class="ops-item-note">${escapeHtml(noteParts.filter(Boolean).join(' · ') || '没有备注。')}</span>
-          <div class="detail-action-bar">${targetButton}</div>
-        </article>
-      `;
-    }).join('');
-
-  document.querySelectorAll('[data-jump-item-id]').forEach((button) => {
-    button.addEventListener('click', () => {
-      navigateToQueueItem(button.dataset.jumpItemId, { resetFilters: true });
-    });
-  });
-
-  document.querySelectorAll('[data-jump-thread-id]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.selectedThreadId = button.dataset.jumpThreadId;
-      state.detailMode = 'thread';
-      setActiveSection('pipeline', { syncContext: false });
-    });
-  });
-
-  document.querySelectorAll('[data-jump-ops-id]').forEach((button) => {
-    button.addEventListener('click', () => {
-      navigateToOpsRecord(button.dataset.jumpOpsId);
-    });
-  });
-}
-
-function getProcessingLaneEntries() {
-  return state.data && state.data.daily_processing_queue && Array.isArray(state.data.daily_processing_queue.entries)
-    ? state.data.daily_processing_queue.entries
-    : [];
-}
-
-function getFilteredProcessingLaneEntries() {
-  const entries = getProcessingLaneEntries();
-
-  if (state.processingLaneFilter === 'all') {
-    return entries;
-  }
-
-  return entries.filter((entry) => entry.source_kind === state.processingLaneFilter);
-}
-
-function getProcessingLaneTypeLabel(sourceKind) {
-  const labels = {
-    queue: '待处理内容',
-    thread: '待人工回复',
-    review: '问题记录'
-  };
-
-  return labels[sourceKind] || translateDisplayValue(sourceKind);
-}
-
-function formatProcessingLaneMeta(entry) {
-  const parts = [];
-
-  if (entry.source_kind === 'queue') {
-    parts.push(cleanClientValue(entry.platform));
-    parts.push(cleanClientValue(entry.project));
-    if (cleanClientValue(entry.lane_status)) {
-      parts.push(`当前状态：${translateDisplayValue(entry.lane_status)}`);
-    }
-    if (cleanClientValue(entry.handoff_status)) {
-      parts.push(`发布准备：${translateDisplayValue(entry.handoff_status)}`);
-    }
-  } else if (entry.source_kind === 'thread') {
-    parts.push(cleanClientValue(entry.platform));
-    parts.push('待人工回复');
-    if (cleanClientValue(entry.lane_status)) {
-      parts.push(`处理状态：${translateDisplayValue(entry.lane_status)}`);
-    }
-  } else if (entry.source_kind === 'review') {
-    parts.push('问题记录');
-    if (cleanClientValue(entry.summary)) {
-      parts.push(entry.summary);
-    }
-    if (cleanClientValue(entry.lane_status)) {
-      parts.push(`跟进状态：${translateDisplayValue(entry.lane_status)}`);
-    }
-  }
-
-  if (entry.timestamp_utc) {
-    parts.push(formatDate(entry.timestamp_utc));
-  }
-
-  return parts.filter(Boolean).join(' · ') || '点击查看详情。';
-}
-
-function formatProcessingLaneNote(entry) {
-  if (entry.source_kind === 'queue') {
-    return entry.note || entry.preview || '打开后可直接处理这条内容。';
-  }
-
-  if (entry.source_kind === 'thread') {
-    return entry.note || entry.preview || '打开后可查看回复上下文并继续处理。';
-  }
-
-  if (entry.source_kind === 'review') {
-    return entry.note || entry.preview || '打开后可继续跟进这条问题记录。';
-  }
-
-  return entry.note || entry.preview || '点击进入对应工作区。';
-}
-
-function formatThreadFlags(record) {
-  const flags = [];
-
-  if (record.manual_required) {
-    flags.push('需人工判断');
-  }
-
-  if (record.has_sensitive_content) {
-    flags.push('含敏感内容');
-  }
-
-  if (record.handoff_ready) {
-    flags.push('已准备交接');
-  }
-
-  if (record.blocked_reasons && record.blocked_reasons.length > 0) {
-    flags.push('当前阻塞');
-  }
-
-  return flags;
-}
-
-function getProcessingPriorityClass(priority) {
-  if (priority === 'high') {
-    return 'tag-status';
-  }
-
-  if (priority === 'medium') {
-    return 'tag-risk';
-  }
-
-  return 'tag-muted';
-}
-
-function getSignalSeverityClass(severity) {
-  if (severity === 'critical') {
-    return 'tag-status';
-  }
-
-  if (severity === 'warning') {
-    return 'tag-risk';
-  }
-
-  return 'tag-muted';
-}
-
-function attachNavigationButtons(selector) {
-  document.querySelectorAll(selector).forEach((button) => {
-    if (button.dataset.selectionBound === 'true') {
-      return;
-    }
-
-    button.dataset.selectionBound = 'true';
-    button.addEventListener('click', () => {
-      navigateByTarget(button.dataset.navKind, button.dataset.navId);
-    });
-  });
-}
-
-function renderProcessingLane() {
-  if (!elements.processingLaneList) return; // DOM removed in unified layout
-  if (!state.data || !state.data.daily_processing_queue) {
-    elements.processingLaneMeta.textContent = '';
-    elements.processingLaneList.innerHTML = '<div class="empty-state">暂时没有日报待处理。</div>';
-    elements.processingLaneFilter.disabled = true;
-    return;
-  }
-
-  const lane = state.data.daily_processing_queue;
-  const filteredEntries = getFilteredProcessingLaneEntries();
-  elements.processingLaneFilter.disabled = lane.total_entries === 0;
-  elements.processingLaneFilter.value = state.processingLaneFilter;
-  elements.processingLaneMeta.textContent = `${filteredEntries.length} / ${lane.total_entries} 条`;
-  elements.processingLaneList.innerHTML = filteredEntries.length === 0
-    ? '<div class="empty-state">当前范围下没有待处理项。</div>'
-    : filteredEntries.map((entry) => {
-      const selectedClass = state.laneSelectionId === entry.id ? ' ops-item-selected' : '';
-
-      return `
-        <button
-          class="ops-item ops-item-button${selectedClass}"
-          data-processing-entry="${escapeHtml(entry.id)}"
-          data-nav-kind="${escapeHtml(entry.navigation && entry.navigation.kind)}"
-          data-nav-id="${escapeHtml(entry.navigation && entry.navigation.target_id)}"
-          type="button"
-        >
-          <div class="ops-item-top">
-            <strong>${escapeHtml(entry.title || '未知项目')}</strong>
-            <div class="tag-group">
-              <span class="tag ${getProcessingPriorityClass(entry.priority)}">${escapeHtml(translateDisplayValue(entry.priority || 'low'))}</span>
-              <span class="tag tag-muted">${escapeHtml(getProcessingLaneTypeLabel(entry.source_kind))}</span>
-            </div>
-          </div>
-          <span class="ops-item-meta">${escapeHtml(formatProcessingLaneMeta(entry))}</span>
-          <span class="ops-item-note">${escapeHtml(formatProcessingLaneNote(entry))}</span>
-        </button>
-      `;
-    }).join('');
-
-  document.querySelectorAll('[data-processing-entry]').forEach((button) => {
-    button.addEventListener('click', () => {
-      handleProcessingLaneEntry(button.dataset.navKind, button.dataset.navId, button.dataset.processingEntry);
-    });
-  });
-}
-
-function renderSignalStream() {
-  if (!elements.signalStreamList) return; // DOM removed in unified layout
-  if (!state.data || !state.data.signal_stream) {
-    elements.signalStreamMeta.textContent = '';
-    elements.signalStreamList.innerHTML = '<div class="empty-state">暂时没有重要变化。</div>';
-    return;
-  }
-
-  const signalStream = state.data.signal_stream;
-  const entries = Array.isArray(signalStream.entries) ? signalStream.entries : [];
-  elements.signalStreamMeta.textContent = `${entries.length} / ${signalStream.total_entries} 条`;
-  elements.signalStreamList.innerHTML = entries.length === 0
-    ? '<div class="empty-state">暂时没有重要变化。</div>'
-    : entries.map((entry) => {
-      const hasTarget = entry.navigation && entry.navigation.kind && entry.navigation.target_id;
-      const openTag = hasTarget
-        ? `<button class="ops-item ops-item-button" data-nav-kind="${escapeHtml(entry.navigation.kind)}" data-nav-id="${escapeHtml(entry.navigation.target_id)}" type="button">`
-        : '<article class="ops-item">';
-      const closeTag = hasTarget ? '</button>' : '</article>';
-
-      return `
-        ${openTag}
-          <div class="ops-item-top">
-            <strong>${escapeHtml(translateDisplayValue(entry.title || entry.signal_kind || 'unknown'))}</strong>
-            <div class="tag-group">
-              <span class="tag ${getSignalSeverityClass(entry.severity)}">${escapeHtml(translateDisplayValue(entry.severity || 'info'))}</span>
-              <span class="tag tag-muted">${escapeHtml(translateDisplayValue(entry.signal_kind || 'unknown'))}</span>
-            </div>
-          </div>
-          <span class="ops-item-meta">${escapeHtml([
-            entry.timestamp_utc ? formatDate(entry.timestamp_utc) : '',
-            entry.summary || ''
-          ].filter(Boolean).join(' · ') || '—')}</span>
-          <span class="ops-item-note">${escapeHtml(
-            entry.signal_kind === 'ops_action'
-              ? [
-                entry.manual_state ? `状态：${getOpsStateLabel(entry.manual_state)}` : '',
-                entry.defer_until_utc ? `暂缓到：${formatDate(entry.defer_until_utc)}` : '',
-                entry.note || ''
-              ].filter(Boolean).join(' · ') || '点击查看详情。'
-              : entry.note || '点击查看详情。'
-          )}</span>
-        ${closeTag}
-      `;
-    }).join('');
-
-  attachNavigationButtons('[data-nav-kind]');
 }
 
 function createOptions(selectElement, values, currentValue) {
@@ -903,6 +672,387 @@ function getQueueItemById(itemId) {
   }
 
   return state.data.items.find((item) => item.id === itemId) || null;
+}
+
+function getProjectHub() {
+  return state.data && state.data.project_hub ? state.data.project_hub : null;
+}
+
+function getProjectProfiles() {
+  const projectHub = getProjectHub();
+  return projectHub && Array.isArray(projectHub.projects) ? projectHub.projects : [];
+}
+
+function getSelectedProjectProfile() {
+  return getProjectProfiles().find((project) => project.project === state.selectedProjectName) || null;
+}
+
+function getSelectedProjectTask() {
+  const profile = getSelectedProjectProfile();
+  if (!profile) {
+    return null;
+  }
+
+  return profile.tasks_by_section
+    .flatMap((section) => section.items || [])
+    .find((item) => item.id === state.selectedProjectTaskId) || null;
+}
+
+function getSelectedProjectMaterial() {
+  const profile = getSelectedProjectProfile();
+  if (!profile) {
+    return null;
+  }
+
+  return (profile.materials || []).find((item) => item.id === state.selectedProjectMaterialId) || null;
+}
+
+const WORKBOARD_LANE_CONFIG = [
+  { id: 'decide', title: '等你拍板', note: '需要人工判断或确认', empty: '当前没有需要拍板的事项。' },
+  { id: 'next', title: '下一步', note: '已经清楚，可以继续推进', empty: '当前没有明确的 next step。' },
+  { id: 'blocked', title: '卡住了', note: '被 blocker、缺信息或阻塞状态拦住', empty: '当前没有 blocker。' },
+  { id: 'watch', title: '观察区', note: '系统在跑、已完成或只需跟进', empty: '当前没有观察中的事项。' }
+];
+
+function summarizeProjectTask(task) {
+  return cleanClientValue(task && task.blocker)
+    || cleanClientValue(task && task.next_step)
+    || cleanClientValue(task && task.current_step)
+    || cleanClientValue(task && task.notes)
+    || '打开右侧查看完整上下文。';
+}
+
+function getWorkboardProjectName(value, fallback = '未归类') {
+  const normalized = cleanClientValue(value);
+  return normalized || fallback;
+}
+
+function getWorkboardSearchText(item) {
+  return [
+    item.title,
+    item.project,
+    item.subtitle,
+    item.note,
+    item.surface,
+    item.stage,
+    item.typeLabel
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function matchesWorkboardFilters(item) {
+  const searchTerm = state.filters.search.trim().toLowerCase();
+  const projectMatch = state.filters.project === 'all' || getWorkboardProjectName(item.project) === state.filters.project;
+  if (!projectMatch) {
+    return false;
+  }
+
+  if (!searchTerm) {
+    return true;
+  }
+
+  return getWorkboardSearchText(item).includes(searchTerm);
+}
+
+function buildWorkboardItem(config) {
+  return {
+    id: config.id,
+    lane: config.lane,
+    mode: config.mode,
+    project: getWorkboardProjectName(config.project),
+    title: config.title,
+    subtitle: config.subtitle || '',
+    note: config.note || '',
+    stage: config.stage || '',
+    surface: config.surface || '',
+    typeLabel: config.typeLabel || '',
+    tagTone: config.tagTone || 'tag-muted',
+    primaryId: config.primaryId || '',
+    secondaryId: config.secondaryId || '',
+    tertiaryId: config.tertiaryId || ''
+  };
+}
+
+function getQueueWorkboardLane(item) {
+  const actionState = cleanClientValue(item && item.action_state);
+  const status = cleanClientValue(item && item.status);
+
+  if (actionState === 'deferred' || actionState === 'missing_info') {
+    return 'blocked';
+  }
+
+  if (actionState === 'ready_to_execute' || status === 'queued') {
+    return 'next';
+  }
+
+  return 'decide';
+}
+
+function getThreadWorkboardLane(record) {
+  if (record.review_state === 'blocked') {
+    return 'blocked';
+  }
+
+  if (record.review_state === 'ready' || record.review_state === 'follow_up') {
+    return 'next';
+  }
+
+  if (record.review_state === 'done') {
+    return 'watch';
+  }
+
+  return 'decide';
+}
+
+function getOpsWorkboardLane(record) {
+  const reviewState = cleanClientValue(record.reviewState);
+  const blockedReasons = record.primaryPayload && Array.isArray(record.primaryPayload.blocked_reasons)
+    ? record.primaryPayload.blocked_reasons
+    : [];
+
+  if (reviewState === 'defer' || blockedReasons.length > 0) {
+    return 'blocked';
+  }
+
+  if (reviewState === 'execute') {
+    return 'next';
+  }
+
+  if (reviewState === 'done' || record.kind === 'experiment') {
+    return 'watch';
+  }
+
+  return 'decide';
+}
+
+function getProjectTaskWorkboardLane(sectionId) {
+  if (sectionId === 'waiting') {
+    return 'blocked';
+  }
+
+  if (sectionId === 'done') {
+    return 'watch';
+  }
+
+  if (sectionId === 'ready' || sectionId === 'running') {
+    return 'next';
+  }
+
+  return 'decide';
+}
+
+function getWorkboardItems() {
+  if (!state.data) {
+    return [];
+  }
+
+  const queueItems = (state.data.items || []).map((item) => buildWorkboardItem({
+    id: `queue:${item.id}`,
+    lane: getQueueWorkboardLane(item),
+    mode: 'queue',
+    project: item.project,
+    title: item.title || '未命名内容入口',
+    subtitle: [getQueueItemTypeLabel(item), getQueueSubtitle(item)].filter(Boolean).join(' · '),
+    note: getQueueListNote(item),
+    stage: getQueueStageLabel(item),
+    surface: '内容入口',
+    typeLabel: getQueueItemTypeLabel(item),
+    tagTone: item.action_state === 'ready_to_execute' ? 'tag-project' : 'tag-status',
+    primaryId: item.id
+  }));
+
+  const threadItems = getThreadRecords().map((record) => {
+    const linkedQueue = getLinkedQueueItemForThread(record);
+    return buildWorkboardItem({
+      id: `thread:${record.reply_id}`,
+      lane: getThreadWorkboardLane(record),
+      mode: 'thread',
+      project: linkedQueue ? linkedQueue.project : '',
+      title: record.reply_id || '未知回复',
+      subtitle: [record.platform || '未知平台', getThreadStateLabel(record.review_state)].join(' · '),
+      note: record.review_note || record.draft_preview || (record.blocked_reasons || []).join('，') || '打开查看回复上下文。',
+      stage: getThreadStateLabel(record.review_state),
+      surface: '自动接力',
+      typeLabel: '回复任务',
+      tagTone: getThreadStateTagClass(record.review_state),
+      primaryId: record.reply_id
+    });
+  });
+
+  const opsItems = getOperationsRecords().map((record) => {
+    const linkedQueue = getLinkedQueueItemForOpsRecord(record);
+    return buildWorkboardItem({
+      id: `ops:${record.id}`,
+      lane: getOpsWorkboardLane(record),
+      mode: 'ops',
+      project: linkedQueue ? linkedQueue.project : '',
+      title: record.title || '未命名异常',
+      subtitle: [record.kind || 'ops', record.subtitle || ''].filter(Boolean).join(' · '),
+      note: record.reviewNote || record.rows.map(([, value]) => value).find(Boolean) || '打开查看诊断与处理记录。',
+      stage: record.reviewState ? getOpsStateLabel(record.reviewState) : '待判断',
+      surface: '人工介入',
+      typeLabel: '异常 / Blocker',
+      tagTone: getOpsStateTagClass(record.reviewState),
+      primaryId: record.id
+    });
+  });
+
+  const projectItems = getProjectProfiles().flatMap((project) => {
+    return (project.tasks_by_section || []).flatMap((section) => {
+      return (section.items || []).map((item) => buildWorkboardItem({
+        id: `project:${item.id}`,
+        lane: getProjectTaskWorkboardLane(section.id),
+        mode: 'project_task',
+        project: project.project,
+        title: item.task || '未命名任务',
+        subtitle: [item.type || 'task', PROJECT_SECTION_LABELS[section.id] || section.title || section.id].join(' · '),
+        note: summarizeProjectTask(item),
+        stage: PROJECT_SECTION_LABELS[section.id] || section.title || section.id,
+        surface: '项目推进',
+        typeLabel: item.type || 'task',
+        tagTone: section.id === 'waiting' ? 'tag-risk' : section.id === 'done' ? 'tag-project' : 'tag-status',
+        primaryId: project.project,
+        secondaryId: item.id
+      }));
+    });
+  });
+
+  return [...queueItems, ...threadItems, ...opsItems, ...projectItems].filter(matchesWorkboardFilters);
+}
+
+function isWorkboardItemSelected(item) {
+  if (!item) {
+    return false;
+  }
+
+  if (item.mode === 'queue') {
+    return state.detailMode === 'queue' && state.selectedId === item.primaryId;
+  }
+
+  if (item.mode === 'thread') {
+    return state.detailMode === 'thread' && state.selectedThreadId === item.primaryId;
+  }
+
+  if (item.mode === 'ops') {
+    return state.detailMode === 'ops' && state.selectedOpsRecordId === item.primaryId;
+  }
+
+  if (item.mode === 'project_task') {
+    return state.detailMode === 'project_task'
+      && state.selectedProjectName === item.primaryId
+      && state.selectedProjectTaskId === item.secondaryId;
+  }
+
+  return false;
+}
+
+function selectWorkboardItem(workItem, options = {}) {
+  if (!workItem) {
+    return;
+  }
+
+  clearActionFeedback();
+  state.detailModalOpen = true;
+
+  if (workItem.mode === 'queue') {
+    state.detailMode = 'queue';
+    state.selectedId = workItem.primaryId;
+    state.selectedThreadId = null;
+    state.selectedOpsRecordId = null;
+    state.selectedProjectTaskId = '';
+    state.selectedProjectMaterialId = '';
+  } else if (workItem.mode === 'thread') {
+    state.detailMode = 'thread';
+    state.selectedThreadId = workItem.primaryId;
+    state.selectedOpsRecordId = null;
+    state.selectedProjectTaskId = '';
+    state.selectedProjectMaterialId = '';
+  } else if (workItem.mode === 'ops') {
+    state.detailMode = 'ops';
+    state.selectedOpsRecordId = workItem.primaryId;
+    state.selectedThreadId = null;
+    state.selectedProjectTaskId = '';
+    state.selectedProjectMaterialId = '';
+  } else if (workItem.mode === 'project_task') {
+    state.detailMode = 'project_task';
+    state.selectedProjectName = workItem.primaryId;
+    state.selectedProjectTaskId = workItem.secondaryId;
+    state.selectedProjectMaterialId = '';
+    state.selectedThreadId = null;
+    state.selectedOpsRecordId = null;
+  }
+
+  if (options.switchSection === false) {
+    renderWorkboard();
+    renderDetailForCurrentMode('请选择一条工作项查看详情。');
+    return;
+  }
+
+  setActiveSection('workboard', { syncContext: false, preserveDetailModal: true });
+}
+
+function renderWorkboard() {
+  if (!elements.workboardBoard || !elements.workboardMeta) {
+    return;
+  }
+
+  if (!state.data) {
+    elements.workboardMeta.textContent = '数据暂不可用';
+    elements.workboardBoard.innerHTML = '<div class="empty-state">工作台数据暂时不可用。</div>';
+    return;
+  }
+
+  const items = getWorkboardItems();
+  const projectCount = new Set(items.map((item) => item.project).filter(Boolean)).size;
+  const blockedCount = items.filter((item) => item.lane === 'blocked').length;
+  const decideCount = items.filter((item) => item.lane === 'decide').length;
+  elements.workboardMeta.textContent = `${items.length} 条工作对象 · ${projectCount} 个项目 · ${decideCount} 条待拍板 · ${blockedCount} 条 blocker`;
+
+  const markup = WORKBOARD_LANE_CONFIG.map((lane) => {
+    const laneItems = items.filter((item) => item.lane === lane.id);
+    const cards = laneItems.length === 0
+      ? `<div class="empty-state-inline">${escapeHtml(lane.empty)}</div>`
+      : laneItems.map((item) => {
+        const selectedClass = isWorkboardItemSelected(item) ? ' is-selected' : '';
+        return `
+          <button class="workboard-card${selectedClass}" type="button" data-workboard-id="${escapeHtml(item.id)}">
+            <div class="workboard-card-top">
+              <div class="tag-group">
+                <span class="tag ${escapeHtml(item.tagTone)}">${escapeHtml(item.surface)}</span>
+                <span class="tag tag-muted">${escapeHtml(item.project)}</span>
+              </div>
+              <span class="workboard-card-stage">${escapeHtml(item.stage || '待处理')}</span>
+            </div>
+            <strong>${escapeHtml(item.title)}</strong>
+            <p>${escapeHtml(item.note || '打开查看详情。')}</p>
+            <div class="workboard-card-meta">
+              <span>${escapeHtml(item.subtitle || '—')}</span>
+              <span>${escapeHtml(item.typeLabel || '—')}</span>
+            </div>
+          </button>
+        `;
+      }).join('');
+
+    return `
+      <section class="workboard-lane">
+        <div class="workboard-lane-header">
+          <div>
+            <h2>${escapeHtml(lane.title)}</h2>
+            <p>${escapeHtml(lane.note)}</p>
+          </div>
+          <span class="workboard-lane-count">${laneItems.length}</span>
+        </div>
+        <div class="workboard-lane-list">${cards}</div>
+      </section>
+    `;
+  }).join('');
+
+  elements.workboardBoard.innerHTML = markup;
+  document.querySelectorAll('[data-workboard-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const workItem = getWorkboardItems().find((item) => item.id === button.dataset.workboardId) || null;
+      selectWorkboardItem(workItem, { switchSection: false });
+    });
+  });
 }
 
 function findQueueItemByReference(reference = {}) {
@@ -1209,6 +1359,40 @@ function getThreadActionLabel(action) {
   return labels[action] || translateDisplayValue(action);
 }
 
+function formatThreadFlags(record) {
+  const flags = [];
+  if (!record) {
+    return flags;
+  }
+
+  if (record.review_override) {
+    flags.push('人工覆盖');
+  }
+  if (record.blocked_reasons && record.blocked_reasons.length > 0) {
+    flags.push(...translateValueList(record.blocked_reasons));
+  }
+  if (record.review_note) {
+    flags.push(record.review_note);
+  }
+
+  return flags;
+}
+
+function getProcessingLaneTypeLabel(sourceKind) {
+  const labels = {
+    comment: '评论',
+    reply: '回复',
+    post: '发帖',
+    article: '文章',
+    thread: '线程',
+    queue: '队列',
+    manual: '手动',
+    system: '系统'
+  };
+
+  return labels[sourceKind] || translateDisplayValue(sourceKind || '未知');
+}
+
 function getOpsStateLabel(stateKey) {
   const labels = {
     review: '需复核',
@@ -1300,6 +1484,7 @@ function clearActionFeedback() {
   state.actionFeedback = null;
   state.threadActionFeedback = null;
   state.opsActionFeedback = null;
+  state.projectActionFeedback = null;
 }
 
 function setFlashMessage(message, tone = 'success') {
@@ -1497,6 +1682,23 @@ function syncSectionContext(section) {
     return;
   }
 
+  if (section === 'workboard') {
+    clearActionFeedback();
+    return;
+  }
+
+  if (section === 'projects') {
+    const firstProject = getProjectProfiles()[0] || null;
+    state.selectedProjectName = state.selectedProjectName || (firstProject ? firstProject.project : '');
+    state.selectedProjectTaskId = '';
+    state.selectedProjectMaterialId = '';
+    state.detailMode = 'project_overview';
+    state.selectedThreadId = null;
+    state.selectedOpsRecordId = null;
+    clearActionFeedback();
+    return;
+  }
+
   if (section === 'overview') {
     state.selectedThreadId = null;
     state.selectedOpsRecordId = null;
@@ -1532,6 +1734,9 @@ function syncSectionContext(section) {
 
 function setActiveSection(section, options = {}) {
   state.activeSection = section;
+  if (options.preserveDetailModal !== true) {
+    closeDetailModal();
+  }
   if (options.syncContext !== false) {
     syncSectionContext(section);
   }
@@ -1542,6 +1747,8 @@ function setActiveSection(section, options = {}) {
   }
 
   renderWorkspaceHighlights();
+  renderWorkboard();
+  renderProjectBoard();
   renderOperationsReview();
   renderList();
 }
@@ -1554,32 +1761,41 @@ function renderWorkspaceHighlights() {
 
   const summary = state.data.summary || {};
   const operationsReview = state.data.operations_review || {};
+  const pendingCount = getInboxTabCount('pending');
+  const readyCount = getInboxTabCount('ready');
   const opsSnapshot = state.data.ops_snapshot || {};
   const processingLane = state.data.daily_processing_queue || {};
   const threads = opsSnapshot.modules && opsSnapshot.modules.threads ? opsSnapshot.modules.threads : null;
+  const projectHub = state.data.project_hub || {};
+  const workspaceSummary = projectHub.workspace_summary || {};
+  const workboardItems = getWorkboardItems();
+  const workboardDecide = workboardItems.filter((item) => item.lane === 'decide').length;
+  const workboardBlocked = workboardItems.filter((item) => item.lane === 'blocked').length;
 
   const cards = [
     {
       section: 'queue',
-      title: '主操作台',
-      value: `${summary.approval_pending_items || 0} 待审 · ${summary.ready_to_execute_count || 0} 可继续`
+      title: 'Inbox',
+      value: `${pendingCount} 待审 · ${readyCount} 可继续`
+    },
+    {
+      section: 'projects',
+      title: 'Projects',
+      value: projectHub.available === false
+        ? '未接入'
+        : `${workspaceSummary.project_count || 0} 项目 · ${workspaceSummary.total_tasks || 0} 条事项`
     },
     {
       section: 'operations',
-      title: '异常拦截',
+      title: 'Issues',
       value: operationsReview.available === false
         ? '不可用'
         : `${processingLane.high_priority_count || 0} 条拦阻`
     },
     {
       section: 'pipeline',
-      title: '机器接管',
+      title: 'Automation',
       value: `${threads ? threads.needs_reply_count : 0} 待人工流转`
-    },
-    {
-      section: 'overview',
-      title: '数据大屏',
-      value: `${summary.total_items || 0} 全局水位`
     }
   ];
 
@@ -1602,12 +1818,421 @@ function renderWorkspaceHighlights() {
       setActiveSection(button.dataset.sectionJump);
     });
   });
+
+  renderProjectShellSummary();
 }
 
 function attachWorkspaceNavigation() {
   document.querySelectorAll('[data-section-tab]').forEach((button) => {
     button.addEventListener('click', () => {
       setActiveSection(button.dataset.sectionTab);
+    });
+  });
+}
+
+function ensureProjectSelection(projectProfiles) {
+  if (!Array.isArray(projectProfiles) || projectProfiles.length === 0) {
+    state.selectedProjectName = '';
+    state.selectedProjectTaskId = '';
+    state.selectedProjectMaterialId = '';
+    return null;
+  }
+
+  const selectedProfile = projectProfiles.find((project) => project.project === state.selectedProjectName) || projectProfiles[0];
+  state.selectedProjectName = selectedProfile.project;
+
+  const taskIds = selectedProfile.tasks_by_section.flatMap((section) => (section.items || []).map((item) => item.id));
+  const materialIds = (selectedProfile.materials || []).map((item) => item.id);
+
+  if (state.selectedProjectTaskId && !taskIds.includes(state.selectedProjectTaskId)) {
+    state.selectedProjectTaskId = '';
+  }
+
+  if (state.selectedProjectMaterialId && !materialIds.includes(state.selectedProjectMaterialId)) {
+    state.selectedProjectMaterialId = '';
+  }
+
+  return selectedProfile;
+}
+
+function renderProjectShellSummary(selectedProfile = getSelectedProjectProfile()) {
+  if (!elements.heroTitle || !elements.heroSubtitle || !elements.heroMetrics || !elements.projectSpotlight) {
+    return;
+  }
+
+  const summary = state.data && state.data.summary ? state.data.summary : {};
+  const projectHub = getProjectHub();
+  const workboardItems = getWorkboardItems();
+  const decideItems = workboardItems.filter((item) => item.lane === 'decide');
+  const nextItems = workboardItems.filter((item) => item.lane === 'next');
+  const blockedItems = workboardItems.filter((item) => item.lane === 'blocked');
+  const sectionConfig = {
+    workboard: {
+      kicker: 'Decision Workbench',
+      title: '多项目统一工作台',
+      subtitle: '默认先处理需要你拍板的，再推进 next step；项目资料层只在具体项目里展开。',
+      metrics: [
+        { label: '待拍板', count: decideItems.length, note: '需要人工判断' },
+        { label: '下一步', count: nextItems.length, note: '已经清楚，可以推进' },
+        { label: 'Blocker', count: blockedItems.length, note: '缺信息或被阻塞' },
+        { label: '项目', count: projectHub && projectHub.project_names ? projectHub.project_names.length : 0, note: '接入项目数' }
+      ],
+      spotlight: [
+        {
+          label: '现在先做',
+          value: decideItems[0] ? decideItems[0].title : '当前没有待拍板事项'
+        },
+        {
+          label: '最明显 blocker',
+          value: blockedItems[0] ? blockedItems[0].note || blockedItems[0].title : '当前没有 blocker'
+        },
+        {
+          label: '最近 next step',
+          value: nextItems[0] ? nextItems[0].title : '当前没有可推进事项'
+        }
+      ]
+    },
+    projects: {
+      kicker: 'Projects',
+      title: selectedProfile ? `${selectedProfile.project} 项目工作台` : '项目推进层 / 资料层',
+      subtitle: selectedProfile
+        ? `${selectedProfile.total_tasks || 0} 条推进任务 · ${(selectedProfile.materials || []).length} 份资料 · ${selectedProfile.total_queue_items || 0} 个执行入口`
+        : `${projectHub && projectHub.project_names ? projectHub.project_names.length : 0} 个项目已经接入统一工作台`,
+      metrics: selectedProfile
+        ? (selectedProfile.focus_cards || []).slice(0, 4)
+        : [
+          { label: '项目', count: projectHub && projectHub.project_names ? projectHub.project_names.length : 0, note: '已接入项目数' },
+          { label: '推进任务', count: projectHub ? projectHub.total_items || 0 : 0, note: '总看板口径' },
+          { label: '待审', count: summary.pending_approvals || 0, note: '审批记录待处理' },
+          { label: '可继续', count: summary.ready_to_execute_count || 0, note: '执行队列可推进' }
+        ],
+      spotlight: selectedProfile
+        ? [
+          {
+            label: '最优先 Next Step',
+            value: selectedProfile.next_steps && selectedProfile.next_steps[0]
+              ? selectedProfile.next_steps[0].next_step || selectedProfile.next_steps[0].title
+              : '当前没有明确的下一步'
+          },
+          {
+            label: '当前 Blocker',
+            value: selectedProfile.blockers && selectedProfile.blockers[0]
+              ? selectedProfile.blockers[0].blocker || selectedProfile.blockers[0].title
+              : '当前没有 blocker'
+          },
+          {
+            label: '资料层覆盖',
+            value: selectedProfile.material_groups && selectedProfile.material_groups.length
+              ? selectedProfile.material_groups.map((group) => `${group.label} ${group.items.length}`).join(' · ')
+              : '还没有挂上项目资料'
+          },
+          {
+            label: '经验沉淀',
+            value: selectedProfile.learned && selectedProfile.learned[0]
+              ? selectedProfile.learned[0].lesson || '已沉淀经验'
+              : '当前没有沉淀条目'
+          }
+        ]
+        : [
+          { label: '目标', value: '项目资料层和任务推进层分开，避免继续靠聊天推进。' },
+          { label: '适配任务', value: '内容、分发、复盘、运营、blocker、next step 全部挂进一个壳里。' }
+        ]
+    },
+    queue: {
+      kicker: 'Inbox',
+      title: '网页内处理执行入口',
+      subtitle: `${getInboxTabCount('pending')} 条待审核 · ${getInboxTabCount('ready')} 条可继续 · ${(state.data && state.data.items ? state.data.items.length : 0)} 条总入口`,
+      metrics: [
+        { label: '待审核', count: getInboxTabCount('pending'), note: '需要拍板' },
+        { label: '可继续', count: getInboxTabCount('ready'), note: '可以直接推进' },
+        { label: '资料不全', count: getInboxTabCount('missing_info'), note: '缺信息待补' },
+        { label: '已暂缓', count: getInboxTabCount('deferred'), note: '先挂起' }
+      ],
+      spotlight: [
+        { label: '当前筛选', value: state.filters.project === 'all' ? '全部项目' : state.filters.project },
+        { label: '搜索', value: state.filters.search ? state.filters.search : '当前没有搜索词' }
+      ]
+    },
+    operations: {
+      kicker: 'Issues',
+      title: '异常与 blocker 工作带',
+      subtitle: '把异常、需复核项和人工决策点拉到一条操作面里。',
+      metrics: [
+        { label: '高优先', count: state.data && state.data.daily_processing_queue ? state.data.daily_processing_queue.high_priority_count || 0 : 0, note: '当前高优先条目' },
+        { label: '审核记录', count: state.data && state.data.operations_review ? (state.data.operations_review.reviews.entries || []).length : 0, note: 'review index' },
+        { label: '实验记录', count: state.data && state.data.operations_review ? (state.data.operations_review.experiments.entries || []).length : 0, note: 'experiment log' },
+        { label: '反馈快照', count: state.data && state.data.operations_review && state.data.operations_review.feedback && state.data.operations_review.feedback.entries ? state.data.operations_review.feedback.entries.length : 0, note: '反馈摘要' }
+      ],
+      spotlight: [
+        { label: '作用', value: '把异常、问题记录、需复核入口集中处理，不和项目资料混在一起。' }
+      ]
+    },
+    pipeline: {
+      kicker: 'Automation',
+      title: '机器接管与人工接力面',
+      subtitle: '把自动回复、填单、handoff 状态收进同一个网页操作面。',
+      metrics: [
+        { label: '待判断', count: getThreadRecords().filter((record) => record.review_state === 'needs_reply').length, note: '需要人工判断' },
+        { label: '可直接回复', count: getThreadRecords().filter((record) => record.review_state === 'ready').length, note: '可直接接手' },
+        { label: '待跟进', count: getThreadRecords().filter((record) => record.review_state === 'follow_up').length, note: '后续动作' },
+        { label: '阻塞', count: getThreadRecords().filter((record) => record.review_state === 'blocked').length, note: '需要人工拆卡' }
+      ],
+      spotlight: [
+        { label: '作用', value: '把自动流程和人工 checkpoint 分开，减少聊天框来回跳。' }
+      ]
+    },
+    overview: {
+      kicker: 'Archive',
+      title: '全局分布',
+      subtitle: '保留旧分桶视图，但不再作为主入口。',
+      metrics: [
+        { label: '项目', count: projectHub && projectHub.project_names ? projectHub.project_names.length : 0, note: '接入项目数' },
+        { label: '推进任务', count: projectHub ? projectHub.total_items || 0 : 0, note: '任务总数' },
+        { label: '待审', count: summary.pending_approvals || 0, note: '审批水位' },
+        { label: '队列', count: summary.total_items || 0, note: '执行入口总数' }
+      ],
+      spotlight: [
+        { label: '作用', value: '保留统计分布，但不在这里做推进动作。' }
+      ]
+    }
+  };
+
+  const currentConfig = sectionConfig[state.activeSection] || sectionConfig.workboard;
+  elements.heroKicker.textContent = currentConfig.kicker;
+  elements.heroTitle.textContent = currentConfig.title;
+  elements.heroSubtitle.textContent = currentConfig.subtitle;
+  elements.heroMetrics.innerHTML = (currentConfig.metrics || []).map((card) => `
+    <article class="hero-metric-card">
+      <span>${escapeHtml(card.label)}</span>
+      <strong>${escapeHtml(String(card.count || 0))}</strong>
+      <p>${escapeHtml(card.note || '—')}</p>
+    </article>
+  `).join('');
+
+  elements.projectSpotlight.hidden = state.activeSection === 'projects';
+  elements.projectSpotlight.innerHTML = (currentConfig.spotlight || []).map((card) => `
+    <article class="spotlight-card">
+      <span>${escapeHtml(card.label)}</span>
+      <strong>${escapeHtml(card.value || '—')}</strong>
+    </article>
+  `).join('');
+}
+
+function renderProjectBoard() {
+  if (!elements.projectBoardSummary || !elements.projectBoardList || !elements.projectBoardMeta) {
+    return;
+  }
+
+  const projectHub = state.data && state.data.project_hub ? state.data.project_hub : null;
+
+  if (!projectHub || projectHub.available === false) {
+    elements.projectBoardSummary.innerHTML = '<div class="empty-state-inline">项目总览暂不可用</div>';
+    elements.projectBoardList.innerHTML = '<div class="empty-state-inline">未读取到多项目总看板数据。</div>';
+    elements.projectBoardMeta.textContent = projectHub && projectHub.path ? `来源：${projectHub.path}` : '未配置项目总看板';
+    if (elements.projectRailMeta) {
+      elements.projectRailMeta.textContent = '0 项目';
+    }
+    elements.projectHubTitle.textContent = '项目总览';
+    elements.projectHubSubtitle.textContent = '';
+    renderProjectShellSummary(null);
+    return;
+  }
+
+  const selectedProfile = ensureProjectSelection(projectHub.projects || []);
+  renderProjectShellSummary(selectedProfile);
+
+  const summaryCards = (projectHub.projects || []).map((project) => {
+    const running = Number(project.section_counts && project.section_counts.running) || 0;
+    const ready = Number(project.section_counts && project.section_counts.ready) || 0;
+    const waiting = Number(project.section_counts && project.section_counts.waiting) || 0;
+    const queueCount = Number(project.total_queue_items) || 0;
+    const isActive = state.selectedProjectName === project.project ? ' is-active' : '';
+    return `
+      <button class="workspace-highlight-card${isActive}" type="button" data-project-pick="${escapeHtml(project.project || '')}">
+        <span class="workspace-highlight-title">${escapeHtml(project.project || '未知项目')}</span>
+        <span class="workspace-highlight-value">${escapeHtml(`${ready} 可推进 · ${running} 推进中 · ${waiting} 阻塞`)}</span>
+        <span class="workspace-highlight-note">${escapeHtml(`${queueCount} 条相关入口`)}</span>
+      </button>
+    `;
+  }).join('');
+
+  elements.projectBoardSummary.innerHTML = summaryCards || '<div class="empty-state-inline">暂无项目卡片。</div>';
+  elements.projectBoardMeta.textContent = `${projectHub.project_names ? projectHub.project_names.length : 0} 个项目 · ${projectHub.total_items || 0} 条任务`;
+  if (elements.projectRailMeta) {
+    elements.projectRailMeta.textContent = `${projectHub.project_names ? projectHub.project_names.length : 0} 项目`;
+  }
+
+  if (!selectedProfile) {
+    elements.projectHubTitle.textContent = '项目总览';
+    elements.projectHubSubtitle.textContent = '';
+    elements.projectBoardList.innerHTML = '<div class="empty-state-inline">没有可展示的项目。</div>';
+    renderProjectShellSummary(null);
+    return;
+  }
+
+  elements.projectHubTitle.textContent = selectedProfile.project;
+  elements.projectHubSubtitle.textContent = `${selectedProfile.total_tasks || 0} 条推进任务 · ${(selectedProfile.materials || []).length || 0} 份资料 · ${selectedProfile.total_queue_items || 0} 个相关入口`;
+  renderProjectShellSummary(selectedProfile);
+
+  const summaryCardMarkup = (selectedProfile.focus_cards || []).map((card) => `
+    <article class="project-summary-card">
+      <span class="project-summary-label">${escapeHtml(card.label)}</span>
+      <strong class="project-summary-value">${escapeHtml(String(card.count || 0))}</strong>
+      <p class="project-summary-note">${escapeHtml(card.note || '—')}</p>
+    </article>
+  `).join('');
+
+  const progressMarkup = (selectedProfile.tasks_by_section || []).map((section) => {
+    const cards = (section.items || []).map((item) => {
+      const selectedClass = state.selectedProjectTaskId === item.id ? ' is-selected' : '';
+      const statusLine = item.blocker
+        ? `Blocker · ${item.blocker}`
+        : item.current_step
+          ? `当前步骤 · ${item.current_step}`
+          : item.next_step
+            ? `下一步 · ${item.next_step}`
+            : '点击查看详情与编辑';
+      const docCount = [item.canonical_link, item.output].filter(Boolean).length;
+      return `
+        <button class="project-card${selectedClass}" type="button" data-project-task-id="${escapeHtml(item.id)}">
+          <div class="project-card-meta">
+            <span class="tag tag-muted">${escapeHtml(item.type || 'task')}</span>
+            ${docCount ? `<span class="tag tag-project">${escapeHtml(`${docCount} 份资料`)}</span>` : ''}
+          </div>
+          <strong>${escapeHtml(item.task || '未命名任务')}</strong>
+          <p>${escapeHtml(statusLine)}</p>
+        </button>
+      `;
+    }).join('');
+
+    return `
+      <section class="project-column">
+        <div class="panel-heading">
+          <h2>${escapeHtml(PROJECT_SECTION_LABELS[section.id] || section.title || section.id)}</h2>
+          <div class="panel-meta">${(section.items || []).length}</div>
+        </div>
+        <div class="project-column-list">${cards || '<div class="empty-state-inline">暂无任务</div>'}</div>
+      </section>
+    `;
+  }).join('');
+
+  const queueMarkup = (selectedProfile.related_queue_items || []).slice(0, 8).map((item) => `
+    <article class="project-strip-card">
+      <strong>${escapeHtml(item.title || '未命名入口')}</strong>
+      <span>${escapeHtml([item.platform, item.category, translateDisplayValue(item.action_state)].filter(Boolean).join(' · '))}</span>
+    </article>
+  `).join('');
+
+  const learnedMarkup = (selectedProfile.learned || []).map((item) => `
+    <article class="project-learned-item">
+      <strong>${escapeHtml(item.scope || '通用')}</strong>
+      <p>${escapeHtml(item.lesson || '—')}</p>
+    </article>
+  `).join('');
+
+  const materialsMarkup = (selectedProfile.material_groups || []).map((group) => {
+    const cards = group.items.map((item) => {
+      const selectedClass = state.selectedProjectMaterialId === item.id ? ' is-selected' : '';
+      const openLink = item.absolute_path ? `<a class="button button-link" href="${escapeHtml(toLocalFileHref(item.absolute_path))}" target="_blank" rel="noreferrer">打开</a>` : '';
+      return `
+        <article class="project-material-card${selectedClass}">
+          <button class="project-material-main" type="button" data-project-material-id="${escapeHtml(item.id)}">
+            <span class="tag tag-muted">${escapeHtml(item.kind || '资料')}</span>
+            <strong>${escapeHtml(item.label || item.title || '未命名资料')}</strong>
+            <p>${escapeHtml(item.task_title || item.title || '—')}</p>
+          </button>
+          <div class="project-material-actions">${openLink}</div>
+        </article>
+      `;
+    }).join('');
+
+    return `
+      <section class="project-material-group">
+        <div class="panel-heading">
+          <h2>${escapeHtml(group.label)}</h2>
+          <div class="panel-meta">${group.items.length}</div>
+        </div>
+        <div class="project-material-grid">${cards}</div>
+      </section>
+    `;
+  }).join('');
+
+  const projectBody = state.projectView === 'materials'
+    ? `
+      <section class="project-summary-grid">${summaryCardMarkup}</section>
+      ${materialsMarkup || '<div class="empty-state-inline">当前项目还没有可挂载的资料。</div>'}
+      ${learnedMarkup ? `<section class="project-learned-panel"><div class="panel-heading"><h2>经验沉淀</h2></div>${learnedMarkup}</section>` : ''}
+    `
+    : `
+      <section class="project-summary-grid">${summaryCardMarkup}</section>
+      <section class="project-progress-grid">${progressMarkup}</section>
+      <section class="project-strip">
+        <div class="panel-heading">
+          <h2>相关执行入口</h2>
+          <div class="panel-meta">${(selectedProfile.related_queue_items || []).length}</div>
+        </div>
+        <div class="project-strip-grid">${queueMarkup || '<div class="empty-state-inline">当前项目没有挂进执行入口。</div>'}</div>
+      </section>
+      ${learnedMarkup ? `<section class="project-learned-panel"><div class="panel-heading"><h2>经验沉淀</h2></div>${learnedMarkup}</section>` : ''}
+    `;
+
+  elements.projectBoardList.innerHTML = projectBody;
+
+  document.querySelectorAll('[data-project-pick]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.selectedProjectName = button.dataset.projectPick;
+      state.selectedProjectTaskId = '';
+      state.selectedProjectMaterialId = '';
+      state.detailMode = 'project_overview';
+      closeDetailModal();
+      state.activeSection = 'projects';
+      renderWorkspaceSections();
+      renderProjectBoard();
+      renderDetailForCurrentMode('请选择一个项目任务或资料。');
+    });
+  });
+
+  document.querySelectorAll('[data-project-view]').forEach((button) => {
+    const isActive = button.dataset.projectView === state.projectView;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+    if (button.dataset.boundProjectView === 'true') {
+      return;
+    }
+    button.dataset.boundProjectView = 'true';
+    button.addEventListener('click', () => {
+      if (button.dataset.projectView === state.projectView) {
+        return;
+      }
+      state.projectView = button.dataset.projectView;
+      state.selectedProjectTaskId = '';
+      state.selectedProjectMaterialId = '';
+      state.detailMode = 'project_overview';
+      closeDetailModal();
+      renderProjectBoard();
+      renderDetailForCurrentMode('请选择一个项目任务或资料。');
+    });
+  });
+
+  document.querySelectorAll('[data-project-task-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.selectedProjectTaskId = button.dataset.projectTaskId;
+      state.selectedProjectMaterialId = '';
+      state.detailMode = 'project_task';
+      state.detailModalOpen = true;
+      renderProjectBoard();
+      renderDetailForCurrentMode('请选择一个项目任务或资料。');
+    });
+  });
+
+  document.querySelectorAll('[data-project-material-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.selectedProjectMaterialId = button.dataset.projectMaterialId;
+      state.selectedProjectTaskId = '';
+      state.detailMode = 'project_material';
+      state.detailModalOpen = true;
+      renderProjectBoard();
+      renderDetailForCurrentMode('请选择一个项目任务或资料。');
     });
   });
 }
@@ -1907,16 +2532,22 @@ function getQueueListNote(item) {
     return `缺失：${translateMissingInfoList(item.missing_info).join('，')}`;
   }
 
-  return cleanClientValue(item.review_note)
-    || cleanClientValue(item.reason)
-    || cleanClientValue(item.notes)
+  const shortReviewNote = cleanClientValue(item.review_note).split(/\r?\n/).find((line) => cleanClientValue(line));
+  const shortReason = cleanClientValue(item.reason).split(/\r?\n/).find((line) => cleanClientValue(line));
+  return shortReviewNote
+    || shortReason
     || sourcePreview
-    || '打开后查看详情并直接处理。';
+    || '点开右侧查看详情。';
 }
 
 function renderFilters() {
   const { statuses, platforms, projects, risks, action_states } = state.data.filters;
-  createOptions(elements.projectFilter, projects, state.filters.project);
+  const mergedProjects = Array.from(new Set([
+    ...(projects || []),
+    ...getProjectProfiles().map((project) => project.project).filter(Boolean)
+  ])).sort((left, right) => String(left).localeCompare(String(right), 'zh-CN'));
+
+  createOptions(elements.projectFilter, mergedProjects, state.filters.project);
   createOptions(elements.statusFilter, statuses, state.filters.status);
   createOptions(elements.actionStateFilter, action_states || [], state.filters.action_state);
   createOptions(elements.platformFilter, platforms, state.filters.platform);
@@ -1962,7 +2593,8 @@ function attachBucketSelection() {
       state.selectedId = button.dataset.itemId;
       state.selectedThreadId = null;
       state.selectedOpsRecordId = null;
-      setActiveSection('queue', { syncContext: false });
+      state.detailModalOpen = true;
+      setActiveSection('queue', { syncContext: false, preserveDetailModal: true });
     });
   });
 }
@@ -1979,7 +2611,8 @@ function attachThreadSelection() {
       state.detailMode = 'thread';
       state.selectedThreadId = button.dataset.threadId;
       state.selectedOpsRecordId = null;
-      setActiveSection('pipeline', { syncContext: false });
+      state.detailModalOpen = true;
+      setActiveSection('pipeline', { syncContext: false, preserveDetailModal: true });
     });
   });
 }
@@ -1996,7 +2629,8 @@ function attachOpsRecordSelection() {
       state.detailMode = 'ops';
       state.selectedOpsRecordId = button.dataset.opsRecordId;
       state.selectedThreadId = null;
-      setActiveSection('operations', { syncContext: false });
+      state.detailModalOpen = true;
+      setActiveSection('operations', { syncContext: false, preserveDetailModal: true });
     });
   });
 }
@@ -2008,7 +2642,7 @@ function resetQueueFilters() {
   state.filters.platform = 'all';
   state.filters.risk = 'all';
   state.filters.search = '';
-  state.inboxTab = 'pending';
+  state.inboxTab = 'ready';
   renderFilters();
   elements.searchInput.value = '';
   renderInboxTabBar();
@@ -2041,7 +2675,8 @@ function navigateToQueueItem(itemId, options = {}) {
   state.selectedId = queueItem.id;
   state.selectedThreadId = null;
   state.selectedOpsRecordId = null;
-  setActiveSection('queue', { syncContext: false });
+  state.detailModalOpen = true;
+  setActiveSection('queue', { syncContext: false, preserveDetailModal: true });
 }
 
 function navigateToThread(replyId) {
@@ -2053,7 +2688,8 @@ function navigateToThread(replyId) {
   state.detailMode = 'thread';
   state.selectedThreadId = replyId;
   state.selectedOpsRecordId = null;
-  setActiveSection('pipeline', { syncContext: false });
+  state.detailModalOpen = true;
+  setActiveSection('pipeline', { syncContext: false, preserveDetailModal: true });
 }
 
 function navigateToOpsRecord(recordId) {
@@ -2065,7 +2701,8 @@ function navigateToOpsRecord(recordId) {
   state.detailMode = 'ops';
   state.selectedOpsRecordId = recordId;
   state.selectedThreadId = null;
-  setActiveSection('operations', { syncContext: false });
+  state.detailModalOpen = true;
+  setActiveSection('operations', { syncContext: false, preserveDetailModal: true });
 }
 
 function navigateByTarget(kind, targetId) {
@@ -2084,49 +2721,107 @@ function navigateByTarget(kind, targetId) {
   }
 }
 
-function renderContextPanel(actions) {
-  if (!actions || actions.length === 0) {
-    elements.detailContextPanel.hidden = true;
-    elements.detailContextBar.innerHTML = '';
+function applyQuickDecision(option, suggestedReply = '') {
+  const cleanOption = cleanClientValue(option);
+  if (!cleanOption) {
     return;
   }
 
-  elements.detailContextPanel.hidden = false;
-  elements.detailContextBar.innerHTML = actions
-    .map((action) => {
-      if (action.kind === 'link') {
+  let note = `审批结论：${cleanOption}`;
+  if (cleanOption.includes('按建议回复') && suggestedReply) {
+    note += `\n建议回复：${suggestedReply}`;
+  } else if (cleanOption.includes('改文案')) {
+    note += suggestedReply
+      ? `\n请按此为基础修改：${suggestedReply}`
+      : '\n请填写你的改后文案。';
+  } else if (cleanOption.includes('暂时不回')) {
+    note += '\n先不执行回复，后续再看。';
+  }
+
+  elements.detailActionNote.value = note;
+  elements.detailActionNote.focus();
+  setFlashMessage(`已带入审批结论：${cleanOption}`);
+}
+
+function renderContextPanel(actions) {
+  if (!actions || actions.length === 0) {
+    elements.detailContextPanel.hidden = false;
+    elements.detailContextBar.innerHTML = '';
+    elements.detailContextBar.hidden = true;
+  } else {
+    elements.detailContextPanel.hidden = false;
+    elements.detailContextBar.hidden = false;
+    elements.detailContextBar.innerHTML = actions
+      .map((action) => {
+        if (action.kind === 'link') {
+          return `
+            <a
+              class="button button-link"
+              href="${escapeHtml(action.href)}"
+              target="_blank"
+              rel="noreferrer"
+            >
+              ${escapeHtml(action.label)}
+            </a>
+          `;
+        }
+
+        if (action.kind === 'copy') {
+          return `
+            <button class="button" data-copy-text="${escapeHtml(action.value || '')}" type="button">
+              ${escapeHtml(action.label)}
+            </button>
+          `;
+        }
+
         return `
-          <a
-            class="button button-link"
-            href="${escapeHtml(action.href)}"
-            target="_blank"
-            rel="noreferrer"
-          >
+          <button class="button" data-context-target="${escapeHtml(action.target)}" type="button">
             ${escapeHtml(action.label)}
-          </a>
+          </button>
         `;
-      }
+      })
+      .join('');
 
-      return `
-        <button class="button" data-context-target="${escapeHtml(action.target)}" type="button">
-          ${escapeHtml(action.label)}
-        </button>
-      `;
-    })
-    .join('');
+    document.querySelectorAll('[data-context-target]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const [targetKind, ...rest] = button.dataset.contextTarget.split(':');
+        const targetId = rest.join(':');
 
-  document.querySelectorAll('[data-context-target]').forEach((button) => {
+        if (targetKind === 'queue') {
+          navigateToQueueItem(targetId, { resetFilters: true });
+        }
+
+        if (targetKind === 'ops') {
+          navigateToOpsRecord(targetId);
+        }
+
+        if (targetKind === 'project-task') {
+          state.selectedProjectTaskId = targetId;
+          state.selectedProjectMaterialId = '';
+          state.detailMode = 'project_task';
+          state.detailModalOpen = true;
+          renderProjectBoard();
+          renderDetailForCurrentMode('请选择一个项目任务或资料。');
+        }
+      });
+    });
+
+    document.querySelectorAll('[data-copy-text]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const text = button.dataset.copyText || '';
+        try {
+          await navigator.clipboard.writeText(text);
+          setFlashMessage('已复制到剪贴板');
+        } catch (_error) {
+          setFlashMessage('复制失败，请手动复制');
+        }
+      });
+    });
+  }
+
+  document.querySelectorAll('[data-decision-option]').forEach((button) => {
     button.addEventListener('click', () => {
-      const [targetKind, ...rest] = button.dataset.contextTarget.split(':');
-      const targetId = rest.join(':');
-
-      if (targetKind === 'queue') {
-        navigateToQueueItem(targetId, { resetFilters: true });
-      }
-
-      if (targetKind === 'ops') {
-        navigateToOpsRecord(targetId);
-      }
+      applyQuickDecision(button.dataset.decisionOption, button.dataset.suggestedReply || '');
     });
   });
 }
@@ -2182,6 +2877,10 @@ function canRunQueueAction(item, action) {
   }
 
   if (action === 'mark_deferred') {
+    return item.action_state !== 'deferred';
+  }
+
+  if (action === 'mark_blocked') {
     return item.action_state !== 'deferred';
   }
 
@@ -2372,14 +3071,18 @@ function renderList() {
     .map((item) => {
       const selectedClass = state.detailMode === 'queue' && item.id === state.selectedId ? ' item-row-selected' : '';
       const approvalTag = item.approval_match ? '<span class="tag tag-muted">已匹配审核</span>' : '';
-      const projectTag = item.project ? `<span class="tag tag-muted">${escapeHtml(item.project)}</span>` : '';
+      const normalizedProject = cleanClientValue(item.project);
+      const normalizedPlatform = cleanClientValue(item.platform);
+      const shouldShowProjectTag = normalizedProject && normalizedProject !== normalizedPlatform && normalizedProject !== 'ReviewHub';
+      const projectTag = shouldShowProjectTag ? `<span class="tag tag-muted">${escapeHtml(item.project)}</span>` : '';
 
       return `
         <button class="item-row${selectedClass}" data-item-id="${escapeHtml(item.id)}" data-item-source="list" type="button">
           <div class="item-row-top" style="display: block; margin-bottom: 8px;">
             <strong style="display: block; font-size: 14px; margin-bottom: 6px;">${escapeHtml(item.title)}</strong>
             <div class="tag-group">
-              <span class="tag tag-status">${escapeHtml(translateDisplayValue(item.action_label || item.action_state || item.status))}</span>
+              <span class="tag tag-status">${escapeHtml(getQueueStageLabel(item))}</span>
+              <span class="tag tag-muted">${escapeHtml(getQueueItemTypeLabel(item))}</span>
               ${projectTag}
               <span class="tag tag-muted">${escapeHtml(item.platform || '未知平台')}</span>
               ${approvalTag}
@@ -2469,6 +3172,168 @@ function renderThreadActionPanel(thread) {
   });
 }
 
+
+function classifyQueueItem(item) {
+  const category = cleanClientValue(item && item.category);
+  const project = cleanClientValue(item && item.project);
+  const ctx = item && item.raw && item.raw.queue && item.raw.queue.reviewhub && item.raw.queue.reviewhub.context
+    ? item.raw.queue.reviewhub.context
+    : null;
+  const decisionType = cleanClientValue(ctx && ctx.decision_type);
+
+  if (decisionType === 'reviewhub_project' || category === 'Project') {
+    return 'project';
+  }
+
+  if (decisionType === 'project_task' || category === 'Project Task') {
+    return 'issue';
+  }
+
+  if (decisionType && decisionType.includes('approval')) {
+    return 'approval';
+  }
+
+  if (category && /Comment Reply|Workflow Approval|Acceptance Checklist/i.test(category)) {
+    return 'approval';
+  }
+
+  if (project && /ReviewHub/i.test(project)) {
+    return 'issue';
+  }
+
+  return 'execution';
+}
+
+function getQueueStageLabel(item) {
+  const type = classifyQueueItem(item);
+  const actionState = cleanClientValue(item && item.action_state);
+
+  if (type === 'approval') {
+    if (actionState === 'missing_info') return '待补充';
+    if (actionState === 'deferred') return '已关闭';
+    return '待审批';
+  }
+
+  if (type === 'project') {
+    if (actionState === 'deferred') return '暂缓';
+    if (actionState === 'missing_info') return '规划中';
+    if (actionState === 'ready_to_execute') return '进行中';
+    return '进行中';
+  }
+
+  if (type === 'issue') {
+    if (actionState === 'deferred') return '阻塞';
+    if (actionState === 'missing_info') return '待修复';
+    if (actionState === 'ready_to_execute') {
+      const note = cleanClientValue(item && item.review_note).toLowerCase();
+      if (/验证|验收|completed|done/.test(note)) return '待验证';
+      return '修复中';
+    }
+    return '待修复';
+  }
+
+  if (actionState === 'deferred') return '阻塞';
+  if (actionState === 'missing_info') return '未开始';
+  if (actionState === 'ready_to_execute') return '进行中';
+  return '未开始';
+}
+
+function buildQueueActionButtons(item) {
+  const type = classifyQueueItem(item);
+  const stage = getQueueStageLabel(item);
+  const buttons = [];
+
+  if (type === 'approval') {
+    if (stage === '待审批') {
+      buttons.push({ action: 'mark_ready', label: '通过', className: 'button button-primary' });
+      buttons.push({ action: 'mark_missing_info', label: '补充后再看', className: 'button' });
+      buttons.push({ action: 'mark_deferred', label: '暂缓', className: 'button' });
+      buttons.push({ action: 'reject', label: '不通过', className: 'button button-danger' });
+    } else if (stage === '待补充') {
+      buttons.push({ action: 'mark_ready', label: '补充完成，回到待审批', className: 'button button-primary' });
+      buttons.push({ action: 'mark_deferred', label: '暂缓', className: 'button' });
+      buttons.push({ action: 'reject', label: '关闭', className: 'button button-danger' });
+    } else if (stage === '已决定') {
+      buttons.push({ action: 'approve', label: '查看决定', className: 'button button-primary' });
+      buttons.push({ action: 'restore_auto', label: '重新打开', className: 'button' });
+    } else {
+      buttons.push({ action: 'restore_auto', label: '重新打开', className: 'button button-primary' });
+    }
+  } else if (type === 'project') {
+    if (stage === '规划中') {
+      buttons.push({ action: 'mark_ready', label: '开始项目', className: 'button button-primary' });
+      buttons.push({ action: 'mark_missing_info', label: '新增事项', className: 'button' });
+      buttons.push({ action: 'mark_deferred', label: '暂缓项目', className: 'button' });
+    } else if (stage === '进行中') {
+      buttons.push({ action: 'mark_ready', label: '更新进度', className: 'button button-primary' });
+      buttons.push({ action: 'mark_missing_info', label: '新增事项', className: 'button' });
+      buttons.push({ action: 'approve', label: '查看事项', className: 'button' });
+      buttons.push({ action: 'mark_deferred', label: '暂缓项目', className: 'button' });
+    } else if (stage === '暂缓') {
+      buttons.push({ action: 'restore_auto', label: '恢复项目', className: 'button button-primary' });
+      buttons.push({ action: 'approve', label: '查看事项', className: 'button' });
+    }
+  } else if (type === 'issue') {
+    if (stage === '待修复') {
+      buttons.push({ action: 'mark_ready', label: '开始修复', className: 'button button-primary' });
+      buttons.push({ action: 'mark_blocked', label: '标记阻塞', className: 'button' });
+      buttons.push({ action: 'mark_missing_info', label: '补充缺失信息', className: 'button' });
+      buttons.push({ action: 'mark_deferred', label: '暂缓', className: 'button' });
+    } else if (stage === '修复中') {
+      buttons.push({ action: 'mark_ready', label: '更新修复进度', className: 'button button-primary' });
+      buttons.push({ action: 'approve', label: '标记待验证', className: 'button' });
+      buttons.push({ action: 'mark_blocked', label: '标记阻塞', className: 'button' });
+      buttons.push({ action: 'mark_deferred', label: '暂缓', className: 'button' });
+    } else if (stage === '待验证') {
+      buttons.push({ action: 'approve', label: '验证通过', className: 'button button-primary' });
+      buttons.push({ action: 'mark_ready', label: '验证不通过', className: 'button' });
+      buttons.push({ action: 'mark_missing_info', label: '补充说明', className: 'button' });
+    } else if (stage === '阻塞') {
+      buttons.push({ action: 'restore_auto', label: '恢复修复', className: 'button button-primary' });
+      buttons.push({ action: 'mark_missing_info', label: '补充缺失信息', className: 'button' });
+    }
+  } else {
+    if (stage === '未开始') {
+      buttons.push({ action: 'mark_ready', label: '开始处理', className: 'button button-primary' });
+      buttons.push({ action: 'mark_blocked', label: '标记阻塞', className: 'button' });
+      buttons.push({ action: 'mark_missing_info', label: '补充缺失信息', className: 'button' });
+      buttons.push({ action: 'mark_deferred', label: '暂缓', className: 'button' });
+    } else if (stage === '进行中') {
+      buttons.push({ action: 'mark_ready', label: '更新进度', className: 'button button-primary' });
+      buttons.push({ action: 'approve', label: '标记待验证', className: 'button' });
+      buttons.push({ action: 'mark_blocked', label: '标记阻塞', className: 'button' });
+      buttons.push({ action: 'mark_deferred', label: '暂缓', className: 'button' });
+    } else if (stage === '阻塞') {
+      buttons.push({ action: 'restore_auto', label: '恢复处理', className: 'button button-primary' });
+      buttons.push({ action: 'mark_missing_info', label: '补充缺失信息', className: 'button' });
+    }
+  }
+
+  if (item.review_override && !buttons.some((button) => button.action === 'restore_auto')) {
+    buttons.push({ action: 'restore_auto', label: '恢复自动判断', className: 'button' });
+  }
+
+  return buttons;
+}
+
+
+function getQueueItemTypeLabel(item) {
+  const type = classifyQueueItem(item);
+  if (type === 'approval') return '审批';
+  if (type === 'project') return '项目';
+  if (type === 'issue') return '问题';
+  return '执行';
+}
+
+function getQueueSubtitle(item) {
+  const platform = cleanClientValue(item && item.platform);
+  const project = cleanClientValue(item && item.project);
+  if (platform && project && platform !== project) {
+    return `${platform} · ${project}`;
+  }
+  return platform || project || '待审核内容';
+}
+
 function renderOpsActionPanel(record) {
   const isPending = state.opsPending || state.actionPending || state.threadPending;
   const buttons = [];
@@ -2533,6 +3398,95 @@ function renderOpsActionPanel(record) {
   });
 }
 
+function hideProjectEditor() {
+  elements.detailProjectEditor.hidden = true;
+  elements.detailProjectEditorMeta.textContent = '';
+  elements.projectCurrentStep.disabled = false;
+  elements.projectTaskType.disabled = false;
+  elements.projectNextStep.disabled = false;
+  elements.projectBlocker.disabled = false;
+  elements.projectNotes.disabled = false;
+  elements.projectCanonicalLink.disabled = false;
+  elements.projectOutput.disabled = false;
+  elements.projectCurrentStep.value = '';
+  elements.projectTaskType.value = '';
+  elements.projectNextStep.value = '';
+  elements.projectBlocker.value = '';
+  elements.projectNotes.value = '';
+  elements.projectCanonicalLink.value = '';
+  elements.projectOutput.value = '';
+  elements.projectSaveButton.disabled = false;
+}
+
+function renderProjectTaskEditor(task) {
+  if (!task) {
+    hideProjectEditor();
+    return;
+  }
+
+  const isPending = Boolean(state.projectPending);
+  elements.detailProjectEditor.hidden = false;
+  elements.detailProjectEditorMeta.textContent = `${PROJECT_SECTION_LABELS[task.section_id] || task.section_title || ''}`;
+  elements.projectCurrentStep.disabled = isPending;
+  elements.projectTaskType.disabled = isPending;
+  elements.projectNextStep.disabled = isPending;
+  elements.projectBlocker.disabled = isPending;
+  elements.projectNotes.disabled = isPending;
+  elements.projectCanonicalLink.disabled = isPending;
+  elements.projectOutput.disabled = isPending;
+  elements.projectCurrentStep.value = task.current_step || '';
+  elements.projectTaskType.value = task.type || '';
+  elements.projectNextStep.value = task.next_step || '';
+  elements.projectBlocker.value = task.blocker || '';
+  elements.projectNotes.value = task.notes || '';
+  elements.projectCanonicalLink.value = task.canonical_link || '';
+  elements.projectOutput.value = task.output || '';
+  elements.projectSaveButton.disabled = isPending;
+}
+
+function renderProjectTaskActionPanel(task) {
+  const isPending = state.projectPending || state.actionPending || state.threadPending || state.opsPending;
+  const sectionOrder = ['inbox', 'ready', 'running', 'waiting', 'done'];
+  const buttons = sectionOrder
+    .filter((sectionId) => sectionId !== task.section_id)
+    .map((sectionId) => ({
+      action: sectionId,
+      label: `移动到${PROJECT_SECTION_LABELS[sectionId] || sectionId}`,
+      className: sectionId === 'running' || sectionId === 'done' ? 'button button-primary' : 'button'
+    }));
+
+  elements.detailActionPanel.hidden = false;
+  elements.detailActionActor.disabled = true;
+  elements.detailActionNote.disabled = true;
+  elements.detailActionDeferUntil.disabled = true;
+  elements.detailActionBar.innerHTML = buttons.length > 0
+    ? buttons.map((button) => `
+        <button
+          class="${button.className}"
+          data-project-move="${escapeHtml(button.action)}"
+          type="button"
+          ${isPending ? 'disabled' : ''}
+        >
+          ${escapeHtml(button.label)}
+        </button>
+      `).join('')
+    : '<div class="empty-state">当前任务已经在最终阶段。</div>';
+
+  if (state.projectActionFeedback && state.projectActionFeedback.taskId === task.id) {
+    elements.detailActionStatus.textContent = state.projectActionFeedback.message;
+    elements.detailActionStatus.className = `detail-action-status is-${state.projectActionFeedback.tone}`;
+  } else {
+    elements.detailActionStatus.textContent = '';
+    elements.detailActionStatus.className = 'detail-action-status';
+  }
+
+  document.querySelectorAll('[data-project-move]').forEach((button) => {
+    button.addEventListener('click', () => {
+      runProjectTaskMove(button.dataset.projectMove);
+    });
+  });
+}
+
 function renderActionPanel(item) {
   if (!item) {
     elements.detailActionPanel.hidden = true;
@@ -2555,6 +3509,22 @@ function renderActionPanel(item) {
     return;
   }
 
+  if (state.detailMode === 'project_task') {
+    renderProjectTaskActionPanel(item);
+    return;
+  }
+
+  if (state.detailMode === 'project_material' || state.detailMode === 'project_overview') {
+    elements.detailActionPanel.hidden = true;
+    elements.detailActionBar.innerHTML = '';
+    elements.detailActionStatus.textContent = '';
+    elements.detailActionStatus.className = 'detail-action-status';
+    state.detailDeferMode = '';
+    elements.detailActionDeferUntil.value = '';
+    syncDeferInputs();
+    return;
+  }
+
   if (state.detailMode !== 'queue') {
     elements.detailActionPanel.hidden = true;
     elements.detailActionBar.innerHTML = '';
@@ -2567,34 +3537,13 @@ function renderActionPanel(item) {
   }
 
   const isPending = state.actionPending || state.threadPending || state.opsPending;
-  const buttons = [];
-
-  if (item.status === 'approval_pending' && item.approval_match) {
-    buttons.push({ action: 'approve', label: '批准并入队', className: 'button button-primary' });
-    buttons.push({ action: 'reject', label: '驳回', className: 'button button-danger' });
-  }
-
-  if (item.action_state !== 'missing_info') {
-    buttons.push({ action: 'mark_missing_info', label: '标记缺信息', className: 'button' });
-  }
-
-  if (item.action_state !== 'ready_to_execute') {
-    buttons.push({ action: 'mark_ready', label: '标记可执行', className: 'button' });
-  }
-
-  if (item.action_state !== 'deferred') {
-    buttons.push({ action: 'mark_deferred', label: '标记暂缓', className: 'button' });
-  }
-
-  if (item.review_override) {
-    buttons.push({ action: 'restore_auto', label: '恢复自动判断', className: 'button' });
-  }
+  const buttons = buildQueueActionButtons(item);
 
   elements.detailActionPanel.hidden = false;
   elements.detailActionActor.value = state.actor;
   elements.detailActionActor.disabled = isPending;
   elements.detailActionNote.disabled = isPending;
-  state.detailDeferMode = item.action_state === 'deferred' ? 'queue' : '';
+  state.detailDeferMode = item.action_state === 'deferred' && Boolean(item.review_defer_until) ? 'queue' : '';
   elements.detailActionDeferUntil.disabled = isPending;
   elements.detailActionDeferUntil.value = toDatetimeLocalValue(item.review_defer_until);
   syncDeferInputs();
@@ -2630,17 +3579,279 @@ function renderActionPanel(item) {
   });
 }
 
+function renderProjectOverviewDetail(project) {
+  closeDetailModal();
+  elements.detailTitle.textContent = project.project || '项目总览';
+  elements.detailSubtitle.textContent = `${project.total_tasks || 0} 条推进任务 · ${(project.materials || []).length || 0} 份资料 · ${project.total_queue_items || 0} 个相关入口`;
+  elements.primaryJsonTitle.textContent = '项目推进';
+  elements.secondaryJsonTitle.textContent = '项目资料';
+
+  const summaryLines = (project.focus_cards || []).map((card) => `
+    <div class="meta-pair">
+      <span>${escapeHtml(card.label)}</span>
+      <strong>${escapeHtml(String(card.count || 0))}</strong>
+      <em class="insight-subtext">${escapeHtml(card.note || '—')}</em>
+    </div>
+  `).join('');
+  elements.detailInsightCore.style.display = '';
+  elements.detailInsightCore.innerHTML = `<div class="insight-label">项目状态</div><div class="insight-meta-grid">${summaryLines}</div>`;
+
+  const diagLines = [];
+  if (project.blockers && project.blockers.length > 0) {
+    diagLines.push(`<div class="insight-flag flag-warn">当前 blocker：${escapeHtml(project.blockers[0].blocker || project.blockers[0].title || '—')}</div>`);
+  }
+  if (project.next_steps && project.next_steps.length > 0) {
+    diagLines.push(`<div class="insight-flag flag-info">最优先 next step：${escapeHtml(project.next_steps[0].next_step || project.next_steps[0].title || '—')}</div>`);
+  }
+  if ((project.learned || []).length > 0) {
+    diagLines.push(`<div class="insight-flag flag-info">已沉淀 ${(project.learned || []).length} 条经验，可直接复用</div>`);
+  }
+  elements.detailInsightDiagnosis.style.display = diagLines.length ? '' : 'none';
+  elements.detailInsightDiagnosis.innerHTML = diagLines.length
+    ? `<div class="insight-label">当前焦点</div>${diagLines.join('')}`
+    : '';
+
+  const metaRows = [
+    ['项目', project.project],
+    ['推进任务', String(project.total_tasks || 0)],
+    ['相关入口', String(project.total_queue_items || 0)],
+    ['资料数', String((project.materials || []).length)],
+    ['阻塞数', String((project.blockers || []).length)],
+    ['Next Step', String((project.next_steps || []).length)]
+  ];
+  elements.detailInsightMetadata.innerHTML = `<div class="insight-meta-grid">${metaRows.map(([label, value]) => `<div class="meta-pair"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`;
+  elements.queueJson.textContent = JSON.stringify(project.tasks_by_section || [], null, 2);
+  elements.approvalJson.textContent = JSON.stringify(project.material_groups || [], null, 2);
+
+  const boardPath = (state.data.project_hub && state.data.project_hub.path) || '';
+  renderContextPanel(boardPath ? [{
+    kind: 'link',
+    label: '打开总看板文件',
+    href: toLocalFileHref(boardPath)
+  }] : []);
+  renderActionLogPanel(null);
+  renderActionPanel(project);
+  hideProjectEditor();
+  renderSourcePreview(null);
+}
+
+function renderProjectTaskDetail(task, project) {
+  elements.detailTitle.textContent = task.task || '项目任务';
+  elements.detailSubtitle.textContent = `${project.project} · ${PROJECT_SECTION_LABELS[task.section_id] || task.section_title || '任务'}`;
+  elements.primaryJsonTitle.textContent = '任务数据';
+  elements.secondaryJsonTitle.textContent = '项目资料';
+
+  const coreRows = [
+    task.current_step ? ['当前步骤', task.current_step] : null,
+    task.next_step ? ['下一步', task.next_step] : null,
+    task.blocker ? ['Blocker', task.blocker] : null,
+    task.notes ? ['备注', task.notes] : null
+  ].filter(Boolean);
+  elements.detailInsightCore.style.display = '';
+  elements.detailInsightCore.innerHTML = `
+    <div class="insight-label">推进层</div>
+    <p class="insight-headline">${escapeHtml(task.task || '未命名任务')}</p>
+    <div class="insight-meta-grid">
+      ${coreRows.map(([label, value]) => `<div class="meta-pair"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}
+    </div>
+  `;
+
+  const diagLines = [];
+  diagLines.push(`<div class="insight-flag flag-info">当前阶段：${escapeHtml(PROJECT_SECTION_LABELS[task.section_id] || task.section_title || '—')}</div>`);
+  if (task.type) {
+    diagLines.push(`<div class="insight-flag flag-info">任务类型：${escapeHtml(task.type)}</div>`);
+  }
+  if (task.canonical_link || task.output) {
+    diagLines.push('<div class="insight-flag flag-info">这张卡已挂接项目资料，可直接切到资料层查看。</div>');
+  }
+  elements.detailInsightDiagnosis.style.display = '';
+  elements.detailInsightDiagnosis.innerHTML = `<div class="insight-label">任务判断</div>${diagLines.join('')}`;
+
+  const relatedMaterials = (project.materials || []).filter((item) => item.task_id === task.id);
+  const metaRows = [
+    ['项目', project.project],
+    ['阶段', PROJECT_SECTION_LABELS[task.section_id] || task.section_title],
+    ['类型', task.type],
+    ['资料数', String(relatedMaterials.length)],
+    ['Canonical Link', task.canonical_link],
+    ['Output', task.output]
+  ].filter(([, value]) => value && value !== '0');
+  elements.detailInsightMetadata.innerHTML = `<div class="insight-meta-grid">${metaRows.map(([label, value]) => `<div class="meta-pair"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`;
+  elements.queueJson.textContent = JSON.stringify(task, null, 2);
+  elements.approvalJson.textContent = JSON.stringify(relatedMaterials, null, 2);
+
+  const contextActions = [];
+  if (task.canonical_link) {
+    contextActions.push({ kind: 'copy', label: '复制资料链接', value: task.canonical_link });
+  }
+  if (task.output) {
+    contextActions.push({ kind: 'copy', label: '复制产出', value: task.output });
+  }
+  renderContextPanel(contextActions);
+  renderActionLogPanel(null);
+  renderActionPanel(task);
+  renderProjectTaskEditor(task);
+  renderSourcePreview(null);
+}
+
+function renderProjectMaterialDetail(material, project) {
+  elements.detailTitle.textContent = material.label || material.title || '项目资料';
+  elements.detailSubtitle.textContent = `${project.project} · ${material.bucket_label || '资料层'}`;
+  elements.primaryJsonTitle.textContent = '资料信息';
+  elements.secondaryJsonTitle.textContent = '关联任务';
+
+  elements.detailInsightCore.style.display = '';
+  elements.detailInsightCore.innerHTML = `
+    <div class="insight-label">资料层</div>
+    <p class="insight-headline">${escapeHtml(material.label || material.title || '未命名资料')}</p>
+    <div class="insight-meta-grid">
+      <div class="meta-pair"><span>归属</span><strong>${escapeHtml(material.bucket_label || '资料')}</strong></div>
+      <div class="meta-pair"><span>来源</span><strong>${escapeHtml(material.kind || 'reference')}</strong></div>
+      ${material.task_title ? `<div class="meta-pair"><span>关联任务</span><strong>${escapeHtml(material.task_title)}</strong></div>` : ''}
+    </div>
+  `;
+
+  elements.detailInsightDiagnosis.style.display = material.note ? '' : 'none';
+  elements.detailInsightDiagnosis.innerHTML = material.note
+    ? `<div class="insight-label">补充说明</div><div class="insight-flag flag-info">${escapeHtml(material.note)}</div>`
+    : '';
+
+  const metaRows = [
+    ['项目', project.project],
+    ['资料层', material.bucket_label],
+    ['路径', material.relative_path],
+    ['任务', material.task_title],
+    ['平台', material.platform],
+    ['类别', material.category]
+  ].filter(([, value]) => value);
+  elements.detailInsightMetadata.innerHTML = `<div class="insight-meta-grid">${metaRows.map(([label, value]) => `<div class="meta-pair"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`;
+  elements.queueJson.textContent = JSON.stringify(material, null, 2);
+  elements.approvalJson.textContent = JSON.stringify(
+    material.task_id
+      ? ((project.tasks_by_section || []).flatMap((section) => section.items || []).find((item) => item.id === material.task_id) || {})
+      : {},
+    null,
+    2
+  );
+
+  const contextActions = [];
+  if (material.absolute_path) {
+    contextActions.push({
+      kind: 'link',
+      label: '打开资料文件',
+      href: toLocalFileHref(material.absolute_path)
+    });
+  }
+  if (material.task_id) {
+    contextActions.push({
+      kind: 'nav',
+      label: '跳到关联任务',
+      target: `project-task:${material.task_id}`
+    });
+  }
+  renderContextPanel(contextActions);
+  renderActionLogPanel(null);
+  renderActionPanel(material);
+  hideProjectEditor();
+  renderSourcePreview(null);
+}
+
 function renderQueueDetail(item) {
+  hideProjectEditor();
   elements.detailTitle.textContent = item.title || '内容详情';
-  elements.detailSubtitle.textContent = `${escapeHtml(item.platform || '')}${item.project ? ' · ' + item.project : ''}`.trim() || '待审核内容';
+  elements.detailSubtitle.textContent = getQueueSubtitle(item);
   elements.primaryJsonTitle.textContent = '原始内容';
   elements.secondaryJsonTitle.textContent = '原始审核';
 
-  // ---- CORE: The content itself ----
+  const reviewhubContext = item.raw && item.raw.queue && item.raw.queue.reviewhub && item.raw.queue.reviewhub.context
+    ? item.raw.queue.reviewhub.context
+    : null;
+  const acceptanceItems = reviewhubContext && Array.isArray(reviewhubContext.acceptance_items)
+    ? reviewhubContext.acceptance_items
+    : [];
+  const projectWorkItems = reviewhubContext && Array.isArray(reviewhubContext.work_items)
+    ? reviewhubContext.work_items
+    : [];
+  const projectObjective = reviewhubContext && reviewhubContext.objective ? reviewhubContext.objective : '';
+  const projectProgress = reviewhubContext && reviewhubContext.progress_summary ? reviewhubContext.progress_summary : '';
+
+  const noteLines = cleanClientValue(item.notes)
+    ? item.notes.split(/\n+/).map((line) => line.trim()).filter(Boolean)
+    : [];
+
+  const structuredPairs = [];
+  noteLines.forEach((line) => {
+    const match = line.match(/^([^：:]+)[：:](.+)$/);
+    if (match) {
+      structuredPairs.push([match[1].trim(), match[2].trim()]);
+    }
+  });
+
+  const pairValue = (keywords) => {
+    const found = structuredPairs.find(([label]) => keywords.some((keyword) => label.includes(keyword)));
+    return found ? found[1] : '';
+  };
+
+  const videoTitle = reviewhubContext && reviewhubContext.video_title
+    ? reviewhubContext.video_title
+    : pairValue(['视频']);
+  const videoIntro = reviewhubContext && reviewhubContext.video_intro
+    ? reviewhubContext.video_intro
+    : pairValue(['视频简介', '投稿文案', '简介']);
+  const sourceVideoUrl = reviewhubContext && reviewhubContext.source_video_url
+    ? reviewhubContext.source_video_url
+    : pairValue(['视频链接', '来源链接']);
+  const originalComment = reviewhubContext && reviewhubContext.original_comment
+    ? reviewhubContext.original_comment
+    : pairValue(['对方原话', '原评论原文', '评论原文']);
+  const pendingComment = originalComment || pairValue(['待处理评论', '评论背景', '评论']);
+  const suggestionLine = reviewhubContext && reviewhubContext.suggested_reply
+    ? reviewhubContext.suggested_reply
+    : pairValue(['建议回复', '建议处理']);
+  const whyReviewLine = reviewhubContext && reviewhubContext.why_review
+    ? reviewhubContext.why_review
+    : cleanClientValue(item.reason) || pairValue(['为什么', '拍板原因']);
+  const options = reviewhubContext && Array.isArray(reviewhubContext.options)
+    ? reviewhubContext.options.filter(Boolean)
+    : [];
+  const extraPairs = structuredPairs.filter(([label]) => !['视频', '待处理评论', '评论背景', '评论', '建议回复', '建议处理', '为什么', '拍板原因', '审批选项'].some((keyword) => label.includes(keyword)));
+
   const coreLines = [];
   if (item.title) coreLines.push(`<p class="insight-headline">${escapeHtml(item.title)}</p>`);
-  if (item.notes) coreLines.push(`<p class="insight-body">${escapeHtml(item.notes)}</p>`);
-  if (item.reason) coreLines.push(`<p class="insight-body insight-muted">审核原因：${escapeHtml(item.reason)}</p>`);
+  const primaryPairs = [
+    videoTitle ? ['视频', videoTitle] : null,
+    pendingComment ? ['待处理评论', pendingComment] : null,
+    ...extraPairs
+  ].filter(Boolean);
+  if (primaryPairs.length > 0) {
+    coreLines.push(`<div class="insight-meta-grid">${primaryPairs.map(([label, value]) => `<div class="meta-pair"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`);
+  }
+  if (whyReviewLine) {
+    coreLines.push(`<div class="insight-flag flag-warn">为什么要你拍板：${escapeHtml(whyReviewLine)}</div>`);
+  }
+  if (projectObjective) {
+    coreLines.push(`<div class="insight-label" style="margin-top: 12px;">项目目标</div><p class="insight-body">${escapeHtml(projectObjective)}</p>`);
+  }
+  if (projectProgress) {
+    coreLines.push(`<div class="insight-label" style="margin-top: 12px;">当前进度</div><p class="insight-body">${escapeHtml(projectProgress)}</p>`);
+  }
+  if (projectWorkItems.length > 0) {
+    coreLines.push(`<div class="insight-label" style="margin-top: 12px;">项目事项</div><div class="insight-meta-grid">${projectWorkItems.map((entry, index) => `<div class="meta-pair"><span>${index + 1}. ${escapeHtml(entry.name || '未命名项')}</span><strong>${escapeHtml(entry.status || '未标记')}</strong><em class="insight-subtext">${escapeHtml(entry.detail || '')}</em></div>`).join('')}</div>`);
+  } else if (acceptanceItems.length > 0) {
+    coreLines.push(`<div class="insight-label" style="margin-top: 12px;">验收子项</div><div class="insight-meta-grid">${acceptanceItems.map((entry, index) => `<div class="meta-pair"><span>${index + 1}. ${escapeHtml(entry.name || '未命名项')}</span><strong>${escapeHtml(entry.status || '未标记')}</strong><em class="insight-subtext">${escapeHtml(entry.detail || '')}</em></div>`).join('')}</div>`);
+  }
+  if (videoIntro) {
+    coreLines.push(`<div class="insight-label" style="margin-top: 12px;">视频简介 / 投稿文案</div><p class="insight-body">${escapeHtml(videoIntro)}</p>`);
+  }
+  if (sourceVideoUrl) {
+    coreLines.push(`<div class="insight-label" style="margin-top: 12px;">来源视频链接</div><p class="insight-body">${escapeHtml(sourceVideoUrl)}</p>`);
+  }
+  if (suggestionLine) {
+    coreLines.push(`<div class="insight-label" style="margin-top: 12px;">建议处理</div><p class="insight-body">${escapeHtml(suggestionLine)}</p>`);
+  }
+  if (options.length > 0) {
+    coreLines.push(`<div class="insight-label" style="margin-top: 12px;">可选操作</div><div class="tag-group quick-decision-group">${options.map((option) => `<button type="button" class="button button-sm quick-decision-button" data-decision-option="${escapeHtml(option)}" data-suggested-reply="${escapeHtml(suggestionLine || '')}">${escapeHtml(option)}</button>`).join('')}</div>`);
+  }
   const hasCoreContent = coreLines.length > 0;
   elements.detailInsightCore.style.display = hasCoreContent ? '' : 'none';
   elements.detailInsightCore.innerHTML = hasCoreContent
@@ -2655,8 +3866,8 @@ function renderQueueDetail(item) {
   if (item.missing_info && item.missing_info.length) {
     diagLines.push(`<div class="insight-flag flag-warn">缺失资料：${escapeHtml(translateMissingInfoList(item.missing_info).join('，'))}</div>`);
   }
-  const statusVal = translateDisplayValue(item.action_label || item.action_state);
-  if (statusVal) diagLines.push(`<div class="insight-flag flag-info">当前状态：${escapeHtml(statusVal)}</div>`);
+  const statusVal = getQueueStageLabel(item);
+  if (statusVal) diagLines.push(`<div class="insight-flag flag-info">当前阶段：${escapeHtml(statusVal)}</div>`);
   const hasDiag = diagLines.length > 0;
   elements.detailInsightDiagnosis.style.display = hasDiag ? '' : 'none';
   elements.detailInsightDiagnosis.innerHTML = hasDiag
@@ -2665,6 +3876,8 @@ function renderQueueDetail(item) {
 
   // ---- METADATA: Audit trail details ----
   const metaRows = [
+    ['类型', getQueueItemTypeLabel(item)],
+    ['阶段', getQueueStageLabel(item)],
     ['平台', item.platform],
     ['项目', item.project],
     ['分类', translateDisplayValue(item.category)],
@@ -2703,6 +3916,7 @@ function renderQueueDetail(item) {
 }
 
 function renderThreadDetail(thread) {
+  hideProjectEditor();
   elements.detailTitle.textContent = thread.reply_id || '回复任务详情';
   elements.detailSubtitle.textContent = `${thread.platform || ''}${thread.channel_name ? ' · ' + thread.channel_name : ''}`.trim() || '自动回复任务';
   elements.primaryJsonTitle.textContent = '回复任务数据';
@@ -2827,6 +4041,7 @@ function renderThreadDetail(thread) {
 }
 
 function renderOperationsDetail(record) {
+  hideProjectEditor();
   elements.detailTitle.textContent = record.title || '问题记录';
   elements.detailSubtitle.textContent = record.subtitle || '运营异常拦截记录';
   elements.primaryJsonTitle.textContent = record.primaryTitle || '原始问题数据';
@@ -2899,6 +4114,8 @@ function renderOperationsDetail(record) {
 
 function renderDetail(item, mode = 'queue', emptyMessage = '请选择一条内容、一条问题记录或一条回复任务。') {
   if (!item) {
+    closeDetailModal();
+    hideProjectEditor();
     elements.detailEmpty.textContent = emptyMessage;
     elements.detailEmpty.hidden = false;
     elements.detailView.hidden = true;
@@ -2914,19 +4131,61 @@ function renderDetail(item, mode = 'queue', emptyMessage = '请选择一条内�
 
   if (mode === 'thread') {
     renderThreadDetail(item);
+    syncDetailModal();
     return;
   }
 
   if (mode === 'ops') {
     renderOperationsDetail(item);
+    syncDetailModal();
     return;
   }
 
   renderQueueDetail(item);
+  syncDetailModal();
 }
 
 function renderDetailForCurrentMode(queueFallbackMessage, selectedQueueItem = null) {
+  if (state.activeSection === 'projects' || ['project_task', 'project_material', 'project_overview'].includes(state.detailMode)) {
+    const selectedProject = getSelectedProjectProfile();
+
+    if (!selectedProject) {
+      renderDetail(null, 'queue', '当前还没有可展示的项目。');
+      hideProjectEditor();
+      return;
+    }
+
+    if (state.detailMode === 'project_task' && state.selectedProjectTaskId) {
+      const task = getSelectedProjectTask();
+      if (task) {
+        elements.detailEmpty.hidden = true;
+        elements.detailView.hidden = false;
+        renderProjectTaskDetail(task, selectedProject);
+        syncDetailModal();
+        return;
+      }
+    }
+
+    if (state.detailMode === 'project_material' && state.selectedProjectMaterialId) {
+      const material = getSelectedProjectMaterial();
+      if (material) {
+        elements.detailEmpty.hidden = true;
+        elements.detailView.hidden = false;
+        renderProjectMaterialDetail(material, selectedProject);
+        syncDetailModal();
+        return;
+      }
+    }
+
+    if (state.activeSection === 'projects' || state.detailMode === 'project_overview') {
+      state.detailMode = 'project_overview';
+      renderProjectOverviewDetail(selectedProject);
+      return;
+    }
+  }
+
   if (state.activeSection === 'overview') {
+    closeDetailModal();
     renderDetail(null, 'queue', '概览只看全局分布，请切到收件箱、问题跟进或自动流程再查看详情。');
     return;
   }
@@ -2980,7 +4239,7 @@ async function runQueueAction(action) {
     return;
   }
 
-  const nextSelectionId = getNextQueueSelection([item.id], item.id);
+  const nextSelectionId = item.id;
   state.actionPending = true;
   state.actionFeedback = {
     itemId: item.id,
@@ -3226,6 +4485,145 @@ async function runOpsAction(action) {
   }
 }
 
+async function runProjectTaskMove(sectionId) {
+  const task = getSelectedProjectTask();
+  const project = getSelectedProjectProfile();
+
+  if (!task || !project || state.projectPending) {
+    return;
+  }
+
+  state.projectPending = true;
+  state.projectActionFeedback = {
+    taskId: task.id,
+    tone: 'success',
+    message: '正在移动任务阶段…'
+  };
+  renderActionPanel(task);
+  renderProjectTaskEditor(task);
+
+  try {
+    const response = await fetch(`/api/project-board/${encodeURIComponent(task.id)}/action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8'
+      },
+      body: JSON.stringify({
+        action: 'move',
+        section_id: sectionId
+      })
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload && payload.error ? payload.error : `提交失败（HTTP ${response.status}）`);
+    }
+
+    state.projectActionFeedback = {
+      taskId: task.id,
+      tone: 'success',
+      message: `已移动到${PROJECT_SECTION_LABELS[sectionId] || sectionId}`
+    };
+    setFlashMessage(`已移动到${PROJECT_SECTION_LABELS[sectionId] || sectionId}`);
+    await loadData({
+      activeSection: 'projects',
+      detailMode: 'project_task',
+      selectedProjectName: project.project,
+      selectedProjectTaskId: payload.item_id,
+      selectedProjectMaterialId: '',
+      projectView: 'progress'
+    });
+  } catch (error) {
+    state.projectActionFeedback = {
+      taskId: task.id,
+      tone: 'error',
+      message: error.message || '移动任务失败。'
+    };
+    renderActionPanel(task);
+  } finally {
+    state.projectPending = false;
+    const selectedTask = getSelectedProjectTask();
+    if (selectedTask) {
+      renderActionPanel(selectedTask);
+      renderProjectTaskEditor(selectedTask);
+    }
+  }
+}
+
+async function runProjectTaskSave() {
+  const task = getSelectedProjectTask();
+  const project = getSelectedProjectProfile();
+
+  if (!task || !project || state.projectPending) {
+    return;
+  }
+
+  state.projectPending = true;
+  state.projectActionFeedback = {
+    taskId: task.id,
+    tone: 'success',
+    message: '正在保存项目任务…'
+  };
+  renderActionPanel(task);
+  elements.projectSaveButton.disabled = true;
+
+  try {
+    const response = await fetch(`/api/project-board/${encodeURIComponent(task.id)}/action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8'
+      },
+      body: JSON.stringify({
+        action: 'update',
+        fields: {
+          type: elements.projectTaskType.value,
+          current_step: elements.projectCurrentStep.value,
+          next_step: elements.projectNextStep.value,
+          blocker: elements.projectBlocker.value,
+          notes: elements.projectNotes.value,
+          canonical_link: elements.projectCanonicalLink.value,
+          output: elements.projectOutput.value
+        }
+      })
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload && payload.error ? payload.error : `提交失败（HTTP ${response.status}）`);
+    }
+
+    state.projectActionFeedback = {
+      taskId: task.id,
+      tone: 'success',
+      message: '项目任务已保存'
+    };
+    setFlashMessage('项目任务已保存');
+    await loadData({
+      activeSection: 'projects',
+      detailMode: 'project_task',
+      selectedProjectName: project.project,
+      selectedProjectTaskId: payload.item_id || task.id,
+      selectedProjectMaterialId: '',
+      projectView: state.projectView
+    });
+  } catch (error) {
+    state.projectActionFeedback = {
+      taskId: task.id,
+      tone: 'error',
+      message: error.message || '保存任务失败。'
+    };
+    renderActionPanel(task);
+  } finally {
+    state.projectPending = false;
+    elements.projectSaveButton.disabled = false;
+    const selectedTask = getSelectedProjectTask();
+    if (selectedTask) {
+      renderActionPanel(selectedTask);
+      renderProjectTaskEditor(selectedTask);
+    }
+  }
+}
+
 function syncFiltersFromInputs() {
   if (!state.data) {
     return;
@@ -3259,14 +4657,6 @@ function syncThreadInboxFilter() {
   }
 }
 
-function syncProcessingLaneFilter() {
-  if (!state.data) {
-    return;
-  }
-
-  state.processingLaneFilter = elements.processingLaneFilter.value;
-  renderProcessingLane();
-}
 
 async function loadData(options = {}) {
   elements.refreshButton.disabled = true;
@@ -3288,6 +4678,18 @@ async function loadData(options = {}) {
   const previousSelectedOpsRecordId = Object.prototype.hasOwnProperty.call(options, 'selectedOpsRecordId')
     ? options.selectedOpsRecordId
     : state.selectedOpsRecordId;
+  const previousSelectedProjectName = Object.prototype.hasOwnProperty.call(options, 'selectedProjectName')
+    ? options.selectedProjectName
+    : state.selectedProjectName;
+  const previousSelectedProjectTaskId = Object.prototype.hasOwnProperty.call(options, 'selectedProjectTaskId')
+    ? options.selectedProjectTaskId
+    : state.selectedProjectTaskId;
+  const previousSelectedProjectMaterialId = Object.prototype.hasOwnProperty.call(options, 'selectedProjectMaterialId')
+    ? options.selectedProjectMaterialId
+    : state.selectedProjectMaterialId;
+  const previousProjectView = Object.prototype.hasOwnProperty.call(options, 'projectView')
+    ? options.projectView
+    : state.projectView;
 
   try {
     const response = await fetch('/api/dashboard', { cache: 'no-store' });
@@ -3310,8 +4712,14 @@ async function loadData(options = {}) {
     state.selectedId = previousSelectedId;
     state.selectedThreadId = previousSelectedThreadId;
     state.selectedOpsRecordId = previousSelectedOpsRecordId;
+    state.selectedProjectName = previousSelectedProjectName;
+    state.selectedProjectTaskId = previousSelectedProjectTaskId;
+    state.selectedProjectMaterialId = previousSelectedProjectMaterialId;
+    state.projectView = previousProjectView;
     setFilterAvailability(false);
     renderWorkspaceHighlights();
+    renderWorkboard();
+    renderProjectBoard();
     renderWorkspaceSections();
     renderSummary();
     renderOperationsReview();
@@ -3328,16 +4736,28 @@ async function loadData(options = {}) {
     renderFlashBanner();
   } catch (error) {
     state.data = null;
+    state.detailModalOpen = false;
+    syncDetailModal();
     clearFlashBanner();
     state.detailMode = 'queue';
     state.selectedId = null;
     state.selectedThreadId = null;
     state.selectedOpsRecordId = null;
+    state.selectedProjectName = '';
+    state.selectedProjectTaskId = '';
+    state.selectedProjectMaterialId = '';
     state.actionPending = false;
     state.threadPending = false;
     state.opsPending = false;
+    state.projectPending = false;
     elements.summaryCards.innerHTML = '';
     elements.workspaceHighlights.innerHTML = '';
+    if (elements.workboardMeta) {
+      elements.workboardMeta.textContent = '';
+    }
+    if (elements.workboardBoard) {
+      elements.workboardBoard.innerHTML = '<div class="empty-state">工作台数据暂时不可用。</div>';
+    }
     elements.operationsUnifiedMeta.textContent = '';
     elements.pipelineUnifiedMeta.textContent = '';
     elements.threadInboxFilter.disabled = true;
@@ -3377,7 +4797,22 @@ elements.searchInput.addEventListener('input', syncFiltersFromInputs);
 
 elements.threadInboxFilter.addEventListener('change', syncThreadInboxFilter);
 elements.refreshButton.addEventListener('click', loadData);
-elements.filterResetButton.addEventListener('click', handleFilterReset);
+elements.projectSaveButton.addEventListener('click', runProjectTaskSave);
+if (elements.detailCloseButton) {
+  elements.detailCloseButton.addEventListener('click', closeDetailModal);
+}
+if (elements.detailModalBackdrop) {
+  elements.detailModalBackdrop.addEventListener('click', closeDetailModal);
+}
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && state.detailModalOpen) {
+    closeDetailModal();
+  }
+});
+window.addEventListener('resize', syncDetailModal);
+if (elements.filterResetButton) {
+  elements.filterResetButton.addEventListener('click', handleFilterReset);
+}
 
 attachWorkspaceNavigation();
 renderWorkspaceSections();
