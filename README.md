@@ -1,11 +1,12 @@
 # ReviewHub
 
-A local ReviewHub workbench for handling approval requests, queue decisions, and execution diagnostics in one place.
+A local multi-project decision workbench for one internal operator: handle what needs judgment now, push the next step, and only open project materials when needed.
 
 ## Project status and roadmap
 
 - Current implementation status and next phases: `ROADMAP_STATUS.md`
 - Upstream data file schema reference: `UPSTREAM_SCHEMAS.md`
+- Reboot product/design baseline: `REBOOT_DECISION.md`
 
 ## Stack
 

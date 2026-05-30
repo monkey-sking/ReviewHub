@@ -133,7 +133,7 @@ test('ops action marks review records done and removes them from the processing 
 test('ops defer action persists defer_until and can be restored back to automatic state', () => {
   withOpsActionFixtures(({ dashboardModule, operationsActionsModule }) => {
     const reviewRecord = dashboardModule.loadDashboardData().operations_record_catalog.find((record) => record.ui_id === 'review:0');
-    const deferUntilUtc = '2026-03-30T03:00:00.000Z';
+    const deferUntilUtc = '2026-05-01T00:00:00.000Z';
 
     operationsActionsModule.applyOpsAction({
       actionId: reviewRecord.action_id,

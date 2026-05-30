@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ReviewHub</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles_premium.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="app-sidebar">
+        <header class="sidebar-header card card-dark">
+          <div>
+            <p class="eyebrow">Decision Workbench</p>
+            <h1>ReviewHub</h1>
+            <p class="sidebar-intro">给一个内部操作者用的多项目工作台。先拍板，再推进，资料层单独看。</p>
+          </div>
+        </header>
+
+        <nav class="sidebar-nav-card card">
+          <div class="panel-heading"><h2>工作视角</h2></div>
+          <div id="workspaceHighlights" class="sidebar-highlights sidebar-stack"></div>
+        </nav>
+
+        <section class="sidebar-nav-card card">
+          <div class="panel-heading">
+            <h2>项目入口</h2>
+            <div id="projectRailMeta" class="panel-meta"></div>
+          </div>
+          <p class="sidebar-section-note">项目里只看两层：推进层和资料层。</p>
+          <div id="projectBoardSummary" class="sidebar-highlights sidebar-stack"></div>
+        </section>
+      </aside>
+
+      <main class="app-feed app-stage">
+        <section class="stage-header card">
+          <div class="stage-header-top">
+            <div class="stage-heading">
+              <p id="heroKicker" class="section-kicker">Default Surface</p>
+              <h2 id="heroTitle">ReviewHub 工作台</h2>
+              <p id="heroSubtitle" class="workspace-hero-subtitle">先处理需要你拍板的，再推进 next step，项目资料层只在需要时展开。</p>
+            </div>
+            <div class="stage-header-actions">
+              <button id="refreshButton" class="button button-primary" type="button">刷新数据</button>
+            </div>
+          </div>
+          <div id="heroMetrics" class="hero-metrics stage-metrics"></div>
+        </section>
+
+        <section id="projectSpotlight" class="project-spotlight-grid signal-strip"></section>
+
+        <section class="card control-strip">
+          <div class="control-strip-main">
+            <label class="filters-column">
+              <span>项目</span>
+              <select id="projectFilter"></select>
+            </label>
+            <label class="filters-column control-search">
+              <span>搜索</span>
+              <input id="searchInput" type="search" placeholder="搜索项目 / 标题 / next step / blocker..." />
+            </label>
+            <button id="filterResetButton" class="button button-sm" type="button">重置筛选</button>
+          </div>
+          <details class="filter-details">
+            <summary class="tag tag-muted" style="cursor: pointer; display: inline-flex; font-size: 11px;">更多筛选</summary>
+            <div>
+              <label class="filters-column"><span>状态</span><select id="statusFilter"></select></label>
+              <label class="filters-column"><span>处理状态</span><select id="actionStateFilter"></select></label>
+              <label class="filters-column"><span>平台</span><select id="platformFilter"></select></label>
+              <label class="filters-column"><span>风险</span><select id="riskFilter"></select></label>
+            </div>
+          </details>
+        </section>
+
+        <section id="statusBanner" class="status-banner">正在加载数据…</section>
+        <section id="flashBanner" class="flash-banner" hidden></section>
+
+        <section id="workboardPanel" class="workspace-panel workboard-panel" data-section-panel="workboard">
+          <div class="list-header workboard-header">
+            <div>
+              <p class="section-kicker">默认入口</p>
+              <h2>统一工作台</h2>
+              <p id="workboardMeta" class="project-hub-subtitle">把内容、分发、复盘、运营、blocker、next step 放到同一条工作带里。</p>
+            </div>
+          </div>
+          <div id="workboardBoard" class="workboard-grid"></div>
+        </section>
+
+        <section id="queuePanel" class="workspace-panel feed-panel" data-section-panel="queue">
+          <div class="list-header queue-header">
+            <div>
+              <p class="section-kicker">Inbox</p>
+              <h2>内容执行入口</h2>
+              <p class="project-hub-subtitle">收内容和执行入口，不和项目资料、异常诊断混在一屏。</p>
+            </div>
+            <div class="queue-toolbar-actions">
+              <div id="resultCount" class="panel-meta"></div>
+            </div>
+          </div>
+          <div class="queue-toolbar">
+            <div class="inbox-view-row" role="tablist" aria-label="收件箱状态">
+              <button class="button inbox-view-tab is-active" data-inbox-tab="pending" type="button">待审核</button>
+              <button class="button inbox-view-tab" data-inbox-tab="ready" type="button">可以继续</button>
+              <button class="button inbox-view-tab" data-inbox-tab="missing_info" type="button">资料不全</button>
+              <button class="button inbox-view-tab" data-inbox-tab="deferred" type="button">已暂缓</button>
+              <button class="button inbox-view-tab" data-inbox-tab="all" type="button">全部</button>
+            </div>
+            <div id="summaryCards" hidden></div>
+          </div>
+          <div id="listMeta" style="display:none;"></div>
+          <div id="itemList" class="item-list"></div>
+        </section>
+
+        <section id="projectBoardPanel" data-section-panel="projects" class="feed-section" hidden>
+          <div class="list-header project-hub-header">
+            <div>
+              <p class="section-kicker">项目推进层 / 资料层</p>
+              <h2 id="projectHubTitle">项目工作台</h2>
+              <p id="projectHubSubtitle" class="project-hub-subtitle"></p>
+              <div id="projectBoardMeta" class="panel-meta" style="margin-top: 8px;"></div>
+            </div>
+            <div class="project-view-toggle" role="tablist" aria-label="项目视图">
+              <button class="button project-view-tab is-active" data-project-view="progress" type="button">推进层</button>
+              <button class="button project-view-tab" data-project-view="materials" type="button">资料层</button>
+            </div>
+          </div>
+          <div id="projectBoardList" class="project-hub-list"></div>
+        </section>
+
+        <section data-section-panel="operations" class="feed-section" hidden>
+           <div class="list-header">
+            <p class="section-kicker">Issues</p>
+            <h2>Blocker 与人工介入</h2>
+            <div id="operationsUnifiedMeta" class="panel-meta" style="margin-top: 8px;"></div>
+          </div>
+          <div id="operationsUnifiedList" class="item-list"></div>
+        </section>
+
+        <section data-section-panel="pipeline" class="feed-section" hidden>
+          <div class="list-header">
+            <p class="section-kicker">Automation</p>
+            <h2>自动流与人工接力</h2>
+            <div id="pipelineUnifiedMeta" class="panel-meta" style="margin-top: 8px;"></div>
+            <div class="panel-heading-side" style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+              <div class="filter-group">
+                <label>
+                  <span>筛选</span>
+                  <select id="threadInboxFilter">
+                    <option value="needs_reply">待人工判断</option><option value="ready">可直接回复</option><option value="follow_up">待跟进</option><option value="blocked">已阻塞</option><option value="done">已处理</option><option value="all">全部</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div id="pipelineUnifiedList" class="item-list"></div>
+        </section>
+
+        <section data-section-panel="overview" class="feed-section" hidden>
+          <section class="management-grid" aria-label="管理分桶">
+            <section class="card bucket-card"><div class="panel-heading"><h2>等你决定</h2><div id="needsReviewCount" class="panel-meta"></div></div><div id="needsReviewList" class="bucket-list"></div></section>
+            <section class="card bucket-card"><div class="panel-heading"><h2>可以继续</h2><div id="readyToExecuteCount" class="panel-meta"></div></div><div id="readyToExecuteList" class="bucket-list"></div></section>
+            <section class="card bucket-card"><div class="panel-heading"><h2>资料不全</h2><div id="needsInfoCount" class="panel-meta"></div></div><div id="needsInfoList" class="bucket-list"></div></section>
+            <section class="card bucket-card"><div class="panel-heading"><h2>已暂缓</h2><div id="deferredCount" class="panel-meta"></div></div><div id="deferredList" class="bucket-list"></div></section>
+          </section>
+        </section>
+      </main>
+
+    <div id="detailModal" class="detail-modal" hidden aria-hidden="true">
+      <button id="detailModalBackdrop" class="detail-modal-backdrop" type="button" aria-label="关闭详情弹窗"></button>
+      <aside class="app-inspector" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+        <section class="card detail-hero-card">
+          <div class="panel-heading hero-heading detail-modal-heading">
+            <div>
+              <p class="section-kicker detail-modal-kicker">专注模式焦点</p>
+              <h2 id="detailTitle" class="detail-modal-title">详细信息</h2>
+              <p id="detailSubtitle" class="detail-modal-subtitle"></p>
+            </div>
+            <button id="detailCloseButton" class="button detail-close-button" type="button" aria-label="关闭详情弹窗">关闭</button>
+          </div>
+
+          <div id="detailEmpty" class="hero-empty-state">
+            <h1>就绪态</h1>
+            <p>请点击中部的队列条目，或直接应用筛选开始流水线审查。</p>
+          </div>
+
+          <div id="detailView" class="hero-content-view" hidden>
+
+            <section id="detailActionPanel" class="detail-action-panel hero-actions">
+              <div id="detailActionBar" class="detail-action-bar mega-action-bar"></div>
+
+              <details class="advanced-action-tools">
+                <summary class="tag tag-muted" style="cursor: pointer; display: inline-flex; margin-bottom: 8px; font-size: 11px;">备注 / 暂缓...</summary>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                   <label class="detail-note-field"><span>处理人</span><input id="detailActionActor" type="text" placeholder="@reviewhub" autocomplete="off" /></label>
+                   <label class="detail-note-field"><span>暂缓到</span><input id="detailActionDeferUntil" type="datetime-local" /></label>
+                   <label class="detail-note-field" style="grid-column: 1 / -1;"><span>处理备注</span><textarea id="detailActionNote" rows="2" placeholder="记录处理结论"></textarea></label>
+                </div>
+              </details>
+              <div class="detail-action-heading" style="display: none;"><div id="detailActionStatus" class="detail-action-status"></div></div>
+            </section>
+
+            <section id="detailProjectEditor" class="detail-action-panel project-editor-panel" hidden>
+              <div class="panel-heading">
+                <h2>任务调整</h2>
+                <div id="detailProjectEditorMeta" class="panel-meta"></div>
+              </div>
+              <div class="project-editor-grid">
+                <label class="detail-note-field">
+                  <span>当前步骤</span>
+                  <input id="projectCurrentStep" type="text" placeholder="记录当前推进到哪一步" />
+                </label>
+                <label class="detail-note-field">
+                  <span>任务类型</span>
+                  <input id="projectTaskType" type="text" placeholder="content / ops / review..." />
+                </label>
+                <label class="detail-note-field" style="grid-column: 1 / -1;">
+                  <span>下一步</span>
+                  <textarea id="projectNextStep" rows="2" placeholder="写清楚这张卡下一步要做什么"></textarea>
+                </label>
+                <label class="detail-note-field" style="grid-column: 1 / -1;">
+                  <span>Blocker</span>
+                  <textarea id="projectBlocker" rows="2" placeholder="如果被卡住，写清楚卡点"></textarea>
+                </label>
+                <label class="detail-note-field" style="grid-column: 1 / -1;">
+                  <span>备注</span>
+                  <textarea id="projectNotes" rows="2" placeholder="补充上下文、说明或判断"></textarea>
+                </label>
+                <label class="detail-note-field" style="grid-column: 1 / -1;">
+                  <span>资料链接</span>
+                  <input id="projectCanonicalLink" type="text" placeholder="例如 Products/Aion/POST_ANALYSIS.md" />
+                </label>
+                <label class="detail-note-field" style="grid-column: 1 / -1;">
+                  <span>产出</span>
+                  <input id="projectOutput" type="text" placeholder="Done 列可记录产出路径或结果" />
+                </label>
+              </div>
+              <div class="project-editor-actions">
+                <button id="projectSaveButton" class="button button-primary" type="button">保存任务</button>
+              </div>
+            </section>
+
+            <div id="detailContextBar" class="detail-action-bar" style="margin-bottom: 4px;"></div>
+
+            <section id="detailContextPanel" class="context-panel" style="display: flex; flex-direction: column; gap: 20px;">
+              <div id="detailInsightCore" class="insight-box core-insight" style="display: none;"></div>
+              <div id="detailInsightDiagnosis" class="insight-box diagnosis-insight" style="display: none;"></div>
+              <div id="detailInsightMetadata" class="insight-box metadata-insight"></div>
+
+              <div class="json-dump-section" style="margin-top: 16px;">
+                <details>
+                  <summary id="primaryJsonTitle" class="tag tag-muted" style="cursor: pointer; display: inline-flex; font-size: 11px;">原始内容</summary>
+                  <pre id="queueJson"><code class="language-json"></code></pre>
+                </details>
+
+                <details>
+                  <summary id="secondaryJsonTitle" class="tag tag-muted" style="cursor: pointer; display: inline-flex; font-size: 11px; margin-top: 12px;">原始审核</summary>
+                  <pre id="approvalJson"><code class="language-json"></code></pre>
+                </details>
+              </div>
+            </section>
+
+            <details class="inspector-collapsible">
+              <summary class="inspector-section-toggle">审批历史与反馈 <span id="actionLogMeta" class="panel-meta" style="font-size: 11px;"></span></summary>
+              <section id="actionLogPanel" class="detail-action-panel">
+                <div id="actionLogList" class="ops-list"></div>
+              </section>
+            </details>
+            <details class="inspector-collapsible">
+              <summary class="inspector-section-toggle">源上下文</summary>
+              <section id="sourcePreviewPanel" class="detail-action-panel">
+                <div id="sourceArtifactList" class="detail-artifact-list"></div>
+                <pre id="sourcePreview" class="json-view source-preview"></pre>
+              </section>
+            </details>
+          </div>
+        </section>
+      </aside>
+    </div>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -645,6 +645,155 @@ test('ops action endpoint persists local follow-up state for review records', as
   }
 });
 
+test('project board action endpoint updates project tasks and dashboard exposes project hub materials', async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewhub-server-test-project-board-'));
+  const approvalPath = path.join(fixtureDir, 'approval_registry.json');
+  const queuePath = path.join(fixtureDir, 'daily_channel_queue.json');
+  const operationsRoot = path.join(fixtureDir, 'operations-root');
+  const stateDir = path.join(operationsRoot, 'Ops', 'state');
+  const runsRoot = path.join(operationsRoot, 'Ops', 'runs');
+  const productsDir = path.join(operationsRoot, 'Products', 'Aion');
+  const contentDir = path.join(operationsRoot, 'Content', 'Marketing');
+  const kanbanPath = path.join(operationsRoot, 'PROJECT_KANBAN.md');
+
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(runsRoot, { recursive: true });
+  fs.mkdirSync(productsDir, { recursive: true });
+  fs.mkdirSync(contentDir, { recursive: true });
+
+  fs.writeFileSync(path.join(stateDir, 'review_index.md'), '# Review Index\n');
+  fs.writeFileSync(path.join(stateDir, 'experiment_log.md'), '# Experiment Log\n');
+  fs.writeFileSync(path.join(stateDir, 'reviewhub_action_log.ndjson'), '');
+  fs.writeFileSync(path.join(stateDir, 'reviewhub_thread_action_log.ndjson'), '');
+  fs.writeFileSync(path.join(stateDir, 'reviewhub_ops_action_log.ndjson'), '');
+
+  fs.writeFileSync(path.join(productsDir, 'POST_ANALYSIS.md'), '# Aion Post Analysis\n');
+  fs.writeFileSync(path.join(contentDir, 'Aion_V2EX_post_draft_2026-03-27.md'), '# Aion Draft\n');
+  fs.writeFileSync(
+    kanbanPath,
+    [
+      '# Project Kanban',
+      '',
+      '## Inbox',
+      '',
+      '| Project | Task | Type | Next Step | Notes |',
+      '| --- | --- | --- | --- | --- |',
+      '| Aion | 收口历史分发文档 | docs | 补齐分发记录目录 | 先收口入口 |',
+      '',
+      '## Ready',
+      '',
+      '| Project | Task | Type | Next Step | Canonical Link |',
+      '| --- | --- | --- | --- | --- |',
+      '',
+      '## Running',
+      '',
+      '| Project | Task | Type | Current Step | Next Step | Canonical Link |',
+      '| --- | --- | --- | --- | --- | --- |',
+      '| Aion | 做 Aion 投稿复盘 | analysis | 已整理上周数据 | 补平台反馈 | Products/Aion/POST_ANALYSIS.md |',
+      '',
+      '## Waiting',
+      '',
+      '| Project | Task | Type | Blocker | Next Step |',
+      '| --- | --- | --- | --- | --- |',
+      '',
+      '## Done',
+      '',
+      '| Project | Task | Type | Output |',
+      '| --- | --- | --- | --- |',
+      '',
+      '## Learned',
+      '',
+      '| Scope | Lesson |',
+      '| --- | --- |',
+      '| Aion | 分发和复盘要分层，不要混在同一张卡里 |'
+    ].join('\n')
+  );
+
+  fs.writeFileSync(
+    approvalPath,
+    JSON.stringify({ schema_version: 'test', updated_at_utc: '2026-03-25T00:00:00.000Z', entries: [] }, null, 2)
+  );
+  fs.writeFileSync(
+    queuePath,
+    JSON.stringify({ schema_version: 'test', run_date: '2026-03-25', items: [], status_counts: {} }, null, 2)
+  );
+
+  const { child, port } = await startServerWithEnv({
+    APPROVAL_REGISTRY_PATH: approvalPath,
+    DAILY_CHANNEL_QUEUE_PATH: queuePath,
+    REVIEWHUB_OPERATIONS_ROOT: operationsRoot,
+    REVIEWHUB_OPS_RUNS_ROOT: runsRoot,
+    REVIEWHUB_PROJECT_KANBAN_PATH: kanbanPath,
+    REVIEW_INDEX_PATH: path.join(stateDir, 'review_index.md'),
+    EXPERIMENT_LOG_PATH: path.join(stateDir, 'experiment_log.md'),
+    REVIEWHUB_ACTION_LOG_PATH: path.join(stateDir, 'reviewhub_action_log.ndjson'),
+    REVIEWHUB_THREAD_ACTION_LOG_PATH: path.join(stateDir, 'reviewhub_thread_action_log.ndjson'),
+    REVIEWHUB_OPS_ACTION_LOG_PATH: path.join(stateDir, 'reviewhub_ops_action_log.ndjson')
+  });
+
+  try {
+    const dashboardResponse = await request('127.0.0.1', port, '/api/dashboard');
+    assert.equal(dashboardResponse.statusCode, 200, dashboardResponse.body);
+    const dashboardPayload = JSON.parse(dashboardResponse.body);
+    const projectProfile = dashboardPayload.project_hub.projects.find((project) => project.project === 'Aion');
+    assert.ok(projectProfile);
+    assert.ok(projectProfile.material_groups.some((group) => group.id === 'review' && group.items.length >= 1));
+    assert.ok(projectProfile.material_groups.some((group) => group.id === 'content' && group.items.length >= 1));
+
+    const task = projectProfile.tasks_by_section
+      .flatMap((section) => section.items || [])
+      .find((item) => item.task === '做 Aion 投稿复盘');
+    assert.ok(task);
+
+    const updateResponse = await request('127.0.0.1', port, `/api/project-board/${encodeURIComponent(task.id)}/action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8'
+      },
+      body: JSON.stringify({
+        action: 'update',
+        fields: {
+          current_step: '已补齐 Appinn 数据',
+          blocker: '缺 Reddit 数据'
+        }
+      })
+    });
+    assert.equal(updateResponse.statusCode, 200, updateResponse.body);
+
+    const moveResponse = await request('127.0.0.1', port, `/api/project-board/${encodeURIComponent(task.id)}/action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8'
+      },
+      body: JSON.stringify({
+        action: 'move',
+        section_id: 'waiting'
+      })
+    });
+    assert.equal(moveResponse.statusCode, 200, moveResponse.body);
+    const movePayload = JSON.parse(moveResponse.body);
+    assert.equal(movePayload.ok, true);
+    assert.equal(movePayload.section_id, 'waiting');
+
+    const refreshedDashboard = await request('127.0.0.1', port, '/api/dashboard');
+    assert.equal(refreshedDashboard.statusCode, 200, refreshedDashboard.body);
+    const refreshedPayload = JSON.parse(refreshedDashboard.body);
+    const refreshedProject = refreshedPayload.project_hub.projects.find((project) => project.project === 'Aion');
+    const waitingTask = refreshedProject.tasks_by_section
+      .find((section) => section.id === 'waiting')
+      .items.find((item) => item.id === task.id);
+    assert.ok(waitingTask);
+    assert.equal(waitingTask.blocker, '缺 Reddit 数据');
+    assert.equal(waitingTask.next_step, '补平台反馈');
+
+    const persistedKanban = fs.readFileSync(kanbanPath, 'utf8');
+    assert.match(persistedKanban, /\| Aion \| 做 Aion 投稿复盘 \| analysis \| 缺 Reddit 数据 \| 补平台反馈 \|/);
+  } finally {
+    await stopServer(child);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test('favicon requests return 204 without console-noise 404 fallback', async () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewhub-server-test-favicon-'));
   const approvalPath = path.join(fixtureDir, 'approval_registry.json');
@@ -699,10 +848,8 @@ test('homepage exposes recent activity, daily processing, signal stream, and sou
   try {
     const homeResponse = await request('127.0.0.1', port, '/');
     assert.equal(homeResponse.statusCode, 200);
-    assert.match(homeResponse.body, /recentActivityList/);
-    assert.match(homeResponse.body, /processingLaneList/);
-    assert.match(homeResponse.body, /signalStreamList/);
-    assert.match(homeResponse.body, /sourcePreviewPanel/);
+    assert.match(homeResponse.body, /id="itemList"/);
+    assert.match(homeResponse.body, /id="detailView"/);
 
     const dashboardResponse = await request('127.0.0.1', port, '/api/dashboard');
     assert.equal(dashboardResponse.statusCode, 200);
@@ -713,6 +860,102 @@ test('homepage exposes recent activity, daily processing, signal stream, and sou
     assert.equal(Array.isArray(payload.daily_processing_queue.entries), true);
     assert.equal(typeof payload.signal_stream, 'object');
     assert.equal(Array.isArray(payload.signal_stream.entries), true);
+  } finally {
+    await stopServer(child);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('project board action API updates the kanban markdown', async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewhub-server-test-project-board-'));
+  const approvalPath = path.join(fixtureDir, 'approval_registry.json');
+  const queuePath = path.join(fixtureDir, 'daily_channel_queue.json');
+  const projectBoardPath = path.join(fixtureDir, 'PROJECT_KANBAN.md');
+
+  fs.writeFileSync(
+    approvalPath,
+    JSON.stringify({ schema_version: 'test', updated_at_utc: '2026-03-24T00:00:00.000Z', entries: [] })
+  );
+  fs.writeFileSync(
+    queuePath,
+    JSON.stringify({ schema_version: 'test', run_date: '2026-03-24', items: [], status_counts: {} })
+  );
+  fs.writeFileSync(
+    projectBoardPath,
+    [
+      '# Project Kanban',
+      '',
+      '## Inbox',
+      '',
+      '| Project | Task | Type | Next Step | Notes |',
+      '|---|---|---|---|---|',
+      '| Aion | 打磨发帖文案 | content | 改首屏表达 | 先看现有版本 |',
+      '',
+      '## Ready',
+      '',
+      '| Project | Task | Type | Next Step | Canonical Link |',
+      '|---|---|---|---|---|',
+      '| Aether | 补齐资料入口 | ops | 对齐 docs 路径 | `Products/Aether/README.md` |',
+      '',
+      '## Running',
+      '',
+      '| Project | Task | Type | Current Step | Next Step | Canonical Link |',
+      '|---|---|---|---|---|---|',
+      '| Operations | 多项目统一管理方式收口 | ops | 已建立总看板初版 | 继续收口视图 | `PROJECT_KANBAN.md` |',
+      '',
+      '## Waiting',
+      '',
+      '| Project | Task | Type | Blocker | Next Step |',
+      '|---|---|---|---|---|',
+      '| Aion | 核对旧分发链接 | analysis | 缺历史链接 | 后续补齐 |',
+      '',
+      '## Done',
+      '',
+      '| Project | Task | Type | Output |',
+      '|---|---|---|---|',
+      '| Aion | 建立复盘初版 | analysis | `Products/Aion/POST_ANALYSIS.md` |',
+      '',
+      '## Learned',
+      '',
+      '| Scope | Lesson |',
+      '|---|---|',
+      '| Cross-project | 项目资料和任务推进要分层 |'
+    ].join('\n')
+  );
+
+  const { child, port } = await startServerWithEnv({
+    APPROVAL_REGISTRY_PATH: approvalPath,
+    DAILY_CHANNEL_QUEUE_PATH: queuePath,
+    REVIEWHUB_PROJECT_KANBAN_PATH: projectBoardPath
+  });
+
+  try {
+    const dashboardResponse = await request('127.0.0.1', port, '/api/dashboard');
+    assert.equal(dashboardResponse.statusCode, 200);
+    const dashboard = JSON.parse(dashboardResponse.body);
+    const task = dashboard.project_hub.projects
+      .find((project) => project.project === 'Aion')
+      .tasks_by_section
+      .flatMap((section) => section.items)
+      .find((item) => item.task === '打磨发帖文案');
+
+    const updateResponse = await request('127.0.0.1', port, `/api/project-board/${encodeURIComponent(task.id)}/action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8'
+      },
+      body: JSON.stringify({
+        action: 'update',
+        fields: {
+          next_step: '补网页内编辑能力'
+        }
+      })
+    });
+
+    assert.equal(updateResponse.statusCode, 200);
+    const payload = JSON.parse(updateResponse.body);
+    assert.equal(payload.ok, true);
+    assert.match(fs.readFileSync(projectBoardPath, 'utf8'), /补网页内编辑能力/);
   } finally {
     await stopServer(child);
     fs.rmSync(fixtureDir, { recursive: true, force: true });

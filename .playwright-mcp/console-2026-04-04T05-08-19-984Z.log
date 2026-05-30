@@ -1,0 +1,37 @@
+[      95ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/chunk-PJEEZAML.js?v=18e777ad:21550
+[     139ms] [ERROR] Warning: React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element.%s borderRight borderright 
+    at aside
+    at http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:32853:16
+    at div
+    at http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:66311:16
+    at Layout
+    at App (http://localhost:4311/src/App.tsx:36:41)
+    at LocaleProvider (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:3724:13)
+    at MotionWrapper (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:6258:32)
+    at ProviderChildren (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:6366:5)
+    at ConfigProvider (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:6657:27) @ http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/chunk-PJEEZAML.js?v=18e777ad:520
+[     185ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:4311/api/workboard:0
+[     185ms] [ERROR] AxiosError: Request failed with status code 500
+    at settle (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/axios.js?v=18e777ad:1319:7)
+    at XMLHttpRequest.onloadend (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/axios.js?v=18e777ad:1682:7)
+    at Axios.request (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/axios.js?v=18e777ad:2330:41) @ http://localhost:4311/src/pages/Workboard.tsx:35
+[     186ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:4311/api/workboard:0
+[     186ms] [ERROR] AxiosError: Request failed with status code 500
+    at settle (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/axios.js?v=18e777ad:1319:7)
+    at XMLHttpRequest.onloadend (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/axios.js?v=18e777ad:1682:7)
+    at Axios.request (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/axios.js?v=18e777ad:2330:41) @ http://localhost:4311/src/pages/Workboard.tsx:35
+[  319502ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:4311/api/workboard:0
+[ 1047322ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/chunk-PJEEZAML.js?v=18e777ad:21550
+[ 1047363ms] [ERROR] Warning: React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element.%s borderRight borderright 
+    at aside
+    at http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:32853:16
+    at div
+    at http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:66311:16
+    at Layout
+    at App (http://localhost:4311/src/App.tsx?t=1775279687425:36:41)
+    at LocaleProvider (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:3724:13)
+    at MotionWrapper (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:6258:32)
+    at ProviderChildren (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:6366:5)
+    at ConfigProvider (http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/antd.js?v=18e777ad:6657:27) @ http://localhost:4311/@fs/Volumes/SSD/Projects/ReviewHub/node_modules/.vite/deps/chunk-PJEEZAML.js?v=18e777ad:520
+[ 1047393ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:4311/api/workboard:0
+[ 1047393ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:4311/api/workboard:0

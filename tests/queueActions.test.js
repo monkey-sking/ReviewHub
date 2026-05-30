@@ -362,7 +362,7 @@ test('defer action stores defer_until and changes dashboard state to deferred', 
       }
     },
     ({ dashboardModule, queueActionsModule, queuePath, actionLogPath }) => {
-      const deferUntilUtc = '2026-03-28T04:00:00.000Z';
+      const deferUntilUtc = '2099-03-28T04:00:00.000Z';
       const result = queueActionsModule.applyQueueAction({
         itemId: 'queue-defer-001',
         action: 'mark_deferred',
@@ -387,7 +387,62 @@ test('defer action stores defer_until and changes dashboard state to deferred', 
       const queueData = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
       assert.equal(queueData.items[0].reviewhub.manual_action_state, 'deferred');
       assert.equal(queueData.items[0].reviewhub.defer_until_utc, deferUntilUtc);
-      assert.match(fs.readFileSync(actionLogPath, 'utf8'), /"defer_until_utc":"2026-03-28T04:00:00.000Z"/);
+      assert.match(fs.readFileSync(actionLogPath, 'utf8'), /"defer_until_utc":"2099-03-28T04:00:00.000Z"/);
+    }
+  );
+});
+
+test('mark_blocked moves an item into blocked state without requiring defer_until', () => {
+  withActionFixtures(
+    {
+      schema_version: 'test',
+      updated_at_utc: '2026-03-24T00:00:00.000Z',
+      entries: []
+    },
+    {
+      schema_version: 'test',
+      run_date: '2026-03-24',
+      items: [
+        {
+          item_id: 'queue-blocked-001',
+          status: 'queued',
+          platform: 'Other',
+          title: 'Queued item to block',
+          owner: 'ops',
+          source: 'Content/Marketing/post.md',
+          risk: 'review',
+          notes: '-'
+        }
+      ],
+      status_counts: {
+        queued: 1
+      }
+    },
+    ({ dashboardModule, queueActionsModule, queuePath, actionLogPath }) => {
+      const result = queueActionsModule.applyQueueAction({
+        itemId: 'queue-blocked-001',
+        action: 'mark_blocked',
+        actor: '@tester',
+        note: '等待外部依赖'
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.item.action_state, 'deferred');
+      assert.equal(result.item.review_defer_until, '');
+
+      const dashboard = dashboardModule.loadDashboardData();
+      assert.equal(dashboard.summary.deferred_count, 1);
+      assert.equal(dashboard.items[0].action_state, 'deferred');
+      const blockedEntry = dashboard.daily_processing_queue.entries.find((entry) => entry.id === 'queue:queue-blocked-001');
+      assert.ok(blockedEntry);
+      assert.equal(blockedEntry.lane_status, 'deferred');
+      assert.equal(blockedEntry.priority, 'low');
+
+      const queueData = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+      assert.equal(queueData.items[0].reviewhub.last_action, 'mark_blocked');
+      assert.equal(queueData.items[0].reviewhub.manual_action_state, 'deferred');
+      assert.ok(!Object.hasOwn(queueData.items[0].reviewhub, 'defer_until_utc'));
+      assert.match(fs.readFileSync(actionLogPath, 'utf8'), /"action":"mark_blocked"/);
     }
   );
 });

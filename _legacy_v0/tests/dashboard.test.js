@@ -11,6 +11,7 @@ function withFixtureData(approvalData, queueData, callback) {
   const reviewIndexPath = path.join(tempDir, 'review_index.md');
   const experimentLogPath = path.join(tempDir, 'experiment_log.md');
   const actionLogPath = path.join(tempDir, 'reviewhub_action_log.ndjson');
+  const projectBoardPath = path.join(tempDir, 'PROJECT_KANBAN.md');
   const operationsRoot = path.join(tempDir, 'operations-root');
   const runsDir = path.join(tempDir, 'runs');
   const previousApprovalPath = process.env.APPROVAL_REGISTRY_PATH;
@@ -18,6 +19,7 @@ function withFixtureData(approvalData, queueData, callback) {
   const previousReviewIndexPath = process.env.REVIEW_INDEX_PATH;
   const previousExperimentLogPath = process.env.EXPERIMENT_LOG_PATH;
   const previousActionLogPath = process.env.REVIEWHUB_ACTION_LOG_PATH;
+  const previousProjectBoardPath = process.env.REVIEWHUB_PROJECT_KANBAN_PATH;
   const previousOperationsRoot = process.env.REVIEWHUB_OPERATIONS_ROOT;
   const previousRunsDir = process.env.OPS_RUNS_DIR;
 
@@ -26,6 +28,48 @@ function withFixtureData(approvalData, queueData, callback) {
   fs.writeFileSync(reviewIndexPath, '# Review Index\n\nDate: 2026-03-24\n');
   fs.writeFileSync(experimentLogPath, '# Experiment Log\n\nDate: 2026-03-24\n');
   fs.writeFileSync(actionLogPath, '');
+  fs.writeFileSync(
+    projectBoardPath,
+    [
+      '# Project Kanban',
+      '',
+      '## Inbox',
+      '',
+      '| Project | Task | Type | Next Step | Notes |',
+      '|---|---|---|---|---|',
+      '| Aion | 补齐素材入口 | ops | 收口资料路径 | 先把入口统一 |',
+      '',
+      '## Ready',
+      '',
+      '| Project | Task | Type | Next Step | Canonical Link |',
+      '|---|---|---|---|---|',
+      '| Aion | 打磨发帖文案 | content | 改首屏表达 | `Content/Marketing/aion_post.md` |',
+      '',
+      '## Running',
+      '',
+      '| Project | Task | Type | Current Step | Next Step | Canonical Link |',
+      '|---|---|---|---|---|---|',
+      '| Operations | 看板重构 | ops | 已搭骨架 | 继续收口视图 | `PROJECT_KANBAN.md` |',
+      '',
+      '## Waiting',
+      '',
+      '| Project | Task | Type | Blocker | Next Step |',
+      '|---|---|---|---|---|',
+      '| Aion | 核对旧分发链接 | analysis | 缺历史链接 | 后续补齐 |',
+      '',
+      '## Done',
+      '',
+      '| Project | Task | Type | Output |',
+      '|---|---|---|---|',
+      '| Aion | 建立复盘初版 | analysis | `Products/Aion/POST_ANALYSIS.md` |',
+      '',
+      '## Learned',
+      '',
+      '| Scope | Lesson |',
+      '|---|---|',
+      '| Cross-project | 项目资料和任务推进要分层 |'
+    ].join('\n')
+  );
   fs.mkdirSync(runsDir, { recursive: true });
   fs.mkdirSync(operationsRoot, { recursive: true });
 
@@ -34,6 +78,7 @@ function withFixtureData(approvalData, queueData, callback) {
   process.env.REVIEW_INDEX_PATH = reviewIndexPath;
   process.env.EXPERIMENT_LOG_PATH = experimentLogPath;
   process.env.REVIEWHUB_ACTION_LOG_PATH = actionLogPath;
+  process.env.REVIEWHUB_PROJECT_KANBAN_PATH = projectBoardPath;
   process.env.REVIEWHUB_OPERATIONS_ROOT = operationsRoot;
   process.env.OPS_RUNS_DIR = runsDir;
 
@@ -72,6 +117,12 @@ function withFixtureData(approvalData, queueData, callback) {
       delete process.env.REVIEWHUB_ACTION_LOG_PATH;
     } else {
       process.env.REVIEWHUB_ACTION_LOG_PATH = previousActionLogPath;
+    }
+
+    if (previousProjectBoardPath === undefined) {
+      delete process.env.REVIEWHUB_PROJECT_KANBAN_PATH;
+    } else {
+      process.env.REVIEWHUB_PROJECT_KANBAN_PATH = previousProjectBoardPath;
     }
 
     if (previousOperationsRoot === undefined) {
@@ -256,6 +307,47 @@ test('manual reviewhub override changes the inferred action state and preserves 
       assert.equal(dashboard.items[0].review_override, true);
       assert.equal(dashboard.items[0].review_note, '需要补截图');
       assert.equal(dashboard.items[0].review_updated_by, '@reviewhub');
+    }
+  );
+});
+
+test('dashboard exposes project hub profiles with separated progress and material layers', () => {
+  withFixtureData(
+    {
+      schema_version: 'test',
+      updated_at_utc: '2026-03-24T00:00:00.000Z',
+      entries: []
+    },
+    {
+      schema_version: 'test',
+      run_date: '2026-03-24',
+      items: [
+        {
+          item_id: 'queue-aion-001',
+          status: 'queued',
+          project: 'Aion',
+          platform: 'Product Hunt',
+          category: 'Marketing',
+          title: 'Aion launch draft',
+          owner: 'ops',
+          source: 'Content/Marketing/ProductHunt_Reddit_Post.md',
+          notes: '-',
+          risk: 'review'
+        }
+      ]
+    },
+    ({ loadDashboardData }) => {
+      const dashboard = loadDashboardData();
+      const aion = dashboard.project_hub.projects.find((project) => project.project === 'Aion');
+
+      assert.ok(aion, 'Expected Aion project profile to exist');
+      assert.equal(aion.section_counts.ready, 1);
+      assert.equal(aion.section_counts.waiting, 1);
+      assert.ok(aion.material_groups.some((group) => group.id === 'content'));
+      assert.ok(aion.material_groups.some((group) => group.id === 'review'));
+      assert.ok(aion.focus_cards.some((card) => card.key === 'next_steps'));
+      assert.equal(aion.related_queue_items.length, 1);
+      assert.equal(aion.next_steps[0].title, '打磨发帖文案');
     }
   );
 });

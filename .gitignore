@@ -2,3 +2,7 @@
 node_modules
 
 .playwright-cli
+
+# Added by automated sync script
+server.log
+dist/
