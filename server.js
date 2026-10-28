@@ -3,7 +3,8 @@ const http = require('http');
 const fs = require('fs');
 
 // PRODUCTION PATH CONFIGURATION
-const OPS_BASE = '/Volumes/SSD/Projects/Operations';
+// Override with OPERATIONS_ROOT; defaults to a local directory outside the repo.
+const OPS_BASE = process.env.OPERATIONS_ROOT || path.join(require('os').homedir(), 'Operations');
 const PUBLIC_DIR = path.resolve(__dirname, 'dist');
 
 const paths = {
