@@ -1,5 +1,9 @@
 # ReviewHub
 
+<!-- badges:start -->
+[![Stars](https://img.shields.io/github/stars/monkey-sking/ReviewHub?style=flat-square)](https://github.com/monkey-sking/ReviewHub/stargazers) [![Forks](https://img.shields.io/github/forks/monkey-sking/ReviewHub?style=flat-square)](https://github.com/monkey-sking/ReviewHub/network/members) [![Last commit](https://img.shields.io/github/last-commit/monkey-sking/ReviewHub?style=flat-square)](https://github.com/monkey-sking/ReviewHub/commits/main)
+<!-- badges:end -->
+
 A local multi-project decision workbench for one internal operator: handle what needs judgment now, push the next step, and only open project materials when needed.
 
 ## Project status and roadmap
